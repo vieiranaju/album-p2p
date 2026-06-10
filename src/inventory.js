@@ -1,103 +1,93 @@
-// inventory.js — Gerenciamento do inventário de figurinhas
+// inventory.js — Gerencia as figurinhas que este nó possui
+//
+// Regras:
+//  - Cada nó começa com 28 cópias de sua própria figurinha
+//  - O inventário é persistido em disco (data/inventory.json)
+//  - Não é permitido ter quantidade negativa
+//
 const fs = require('fs');
 const path = require('path');
 const EventEmitter = require('events');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const INVENTORY_FILE = path.join(DATA_DIR, 'inventory.json');
+const INVENTORY_FILE = path.join(__dirname, '..', 'data', 'inventory.json');
 
 class Inventory extends EventEmitter {
-  constructor(stickerId, initialQty = 28) {
+  constructor(myStickerId, initialQty = 28) {
     super();
-    this.stickerId = stickerId;
-    this.initialQty = initialQty;
-    this.items = {}; // { sticker_id: quantity }
+    this.myStickerId = myStickerId;
+    this.initialQty  = initialQty;
+    this.items       = {}; // { sticker_id: quantidade }
     this._load();
   }
 
-  _load() {
-    try {
-      if (fs.existsSync(INVENTORY_FILE)) {
-        const data = fs.readFileSync(INVENTORY_FILE, 'utf-8');
-        this.items = JSON.parse(data);
-        console.log('[INVENTÁRIO] Carregado do disco:', this.items);
-      } else {
-        // Inventário inicial: 28 cópias da figurinha do aluno
-        this.items = { [this.stickerId]: this.initialQty };
-        this._save();
-        console.log('[INVENTÁRIO] Criado com', this.initialQty, 'cópias de', this.stickerId);
-      }
-    } catch (err) {
-      console.error('[INVENTÁRIO] Erro ao carregar:', err.message);
-      this.items = { [this.stickerId]: this.initialQty };
-      this._save();
-    }
-  }
-
-  _save() {
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      fs.writeFileSync(INVENTORY_FILE, JSON.stringify(this.items, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('[INVENTÁRIO] Erro ao salvar:', err.message);
-    }
-  }
-
+  // Verificar se possui pelo menos uma cópia da figurinha
   has(stickerId) {
-    return (this.items[stickerId] || 0) > 0;
+    return this.getQuantity(stickerId) > 0;
   }
 
+  // Quantidade disponível de uma figurinha
   getQuantity(stickerId) {
     return this.items[stickerId] || 0;
   }
 
+  // Cópia do inventário completo
   getAll() {
     return { ...this.items };
   }
 
+  // Quantas figurinhas distintas este nó possui
   getTotalUnique() {
-    return Object.keys(this.items).filter(k => this.items[k] > 0).length;
+    return Object.values(this.items).filter(qty => qty > 0).length;
   }
 
+  // Soma total de todas as figurinhas
   getTotalCount() {
-    return Object.values(this.items).reduce((sum, q) => sum + q, 0);
+    return Object.values(this.items).reduce((sum, qty) => sum + qty, 0);
   }
 
+  // Verificar se tem quantidade suficiente para uma troca
   canTrade(stickerId, qty = 1) {
     return this.getQuantity(stickerId) >= qty;
   }
 
+  // Adicionar figurinha ao inventário
   add(stickerId, qty = 1) {
-    if (qty <= 0) throw new Error('Quantidade deve ser positiva');
-    this.items[stickerId] = (this.items[stickerId] || 0) + qty;
+    this.items[stickerId] = this.getQuantity(stickerId) + qty;
+    console.log(`[INVENTÁRIO] +${qty} ${stickerId} → total: ${this.items[stickerId]}`);
     this._save();
     this.emit('updated', this.getAll());
-    console.log(`[INVENTÁRIO] +${qty} ${stickerId} (total: ${this.items[stickerId]})`);
   }
 
+  // Remover figurinha do inventário (lança erro se insuficiente)
   remove(stickerId, qty = 1) {
-    if (qty <= 0) throw new Error('Quantidade deve ser positiva');
-    const current = this.items[stickerId] || 0;
-    if (current < qty) {
-      throw new Error(`Inventário insuficiente: ${stickerId} tem ${current}, precisa ${qty}`);
+    const atual = this.getQuantity(stickerId);
+    if (atual < qty) {
+      throw new Error(`Inventário insuficiente: ${stickerId} tem ${atual}, precisa ${qty}`);
     }
-    this.items[stickerId] = current - qty;
-    if (this.items[stickerId] === 0) {
-      delete this.items[stickerId];
-    }
+    this.items[stickerId] = atual - qty;
+    if (this.items[stickerId] === 0) delete this.items[stickerId]; // remover entradas zeradas
+    console.log(`[INVENTÁRIO] -${qty} ${stickerId} → total: ${this.getQuantity(stickerId)}`);
     this._save();
     this.emit('updated', this.getAll());
-    console.log(`[INVENTÁRIO] -${qty} ${stickerId} (total: ${this.items[stickerId] || 0})`);
   }
 
-  // Reset do inventário (para testes)
-  reset() {
-    this.items = { [this.stickerId]: this.initialQty };
-    this._save();
-    this.emit('updated', this.getAll());
-    console.log('[INVENTÁRIO] Reset para estado inicial');
+  // ─── Persistência ─────────────────────────────────────────────────────────
+
+  _load() {
+    if (fs.existsSync(INVENTORY_FILE)) {
+      this.items = JSON.parse(fs.readFileSync(INVENTORY_FILE, 'utf-8'));
+      console.log('[INVENTÁRIO] Carregado do disco:', this.items);
+    } else {
+      // Primeiro uso: começar com as cópias iniciais da própria figurinha
+      this.items = { [this.myStickerId]: this.initialQty };
+      this._save();
+      console.log(`[INVENTÁRIO] Criado: ${this.initialQty}x ${this.myStickerId}`);
+    }
+  }
+
+  _save() {
+    fs.mkdirSync(path.dirname(INVENTORY_FILE), { recursive: true });
+    fs.writeFileSync(INVENTORY_FILE, JSON.stringify(this.items, null, 2), 'utf-8');
   }
 }
 

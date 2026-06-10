@@ -1,351 +1,233 @@
-// server.js — Entry point: HTTP + WebSocket Server P2P
+// server.js — Ponto de entrada: servidor HTTP + WebSocket P2P
 const express = require('express');
-const http = require('http');
+const http    = require('http');
 const WebSocket = require('ws');
-const path = require('path');
-const fs = require('fs');
+const path    = require('path');
+const fs      = require('fs');
 
-// Carregar configuração
-let configPath = path.join(__dirname, 'config.json');
+// ─── Configuração ─────────────────────────────────────────────────────────────
 
-// Suporte a --config para testes com múltiplos nós
+// Suporte a --config=arquivo.json e --port=XXXX na linha de comando
 const configArg = process.argv.find(a => a.startsWith('--config='));
-if (configArg) {
-  configPath = path.resolve(configArg.split('=')[1]);
-}
-const portArg = process.argv.find(a => a.startsWith('--port='));
+const portArg   = process.argv.find(a => a.startsWith('--port='));
 
-const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-if (portArg) {
-  config.port = parseInt(portArg.split('=')[1]);
-}
+const configPath = configArg ? path.resolve(configArg.split('=')[1]) : path.join(__dirname, 'config.json');
+const config     = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+if (portArg) config.port = parseInt(portArg.split('=')[1]);
 
 console.log('═══════════════════════════════════════════════');
 console.log(`  🎴 Sistema de Figurinhas P2P`);
-console.log(`  📛 Nó: ${config.peer_id}`);
+console.log(`  📛 Nó:        ${config.peer_id}`);
 console.log(`  🖼️  Figurinha: ${config.sticker_id}`);
-console.log(`  🔌 Porta: ${config.port}`);
+console.log(`  🔌 Porta:     ${config.port}`);
 console.log('═══════════════════════════════════════════════');
 
-// Módulos internos
-const Inventory = require('./src/inventory');
+// ─── Módulos internos ─────────────────────────────────────────────────────────
+
+const Inventory       = require('./src/inventory');
 const NeighborManager = require('./src/neighbor-manager');
-const TradeManager = require('./src/trade-manager');
-const PeerEngine = require('./src/peer-engine');
-const MessageHandler = require('./src/message-handler');
+const TradeManager    = require('./src/trade-manager');
+const PeerEngine      = require('./src/peer-engine');
+const MessageHandler  = require('./src/message-handler');
 
-// Inicializar módulos
-const inventory = new Inventory(config.sticker_id, 28);
-const neighborManager = new NeighborManager(config);
+const inventory   = new Inventory(config.sticker_id, 28);
+const neighbors   = new NeighborManager(config);
+const trades      = new TradeManager(config.peer_id, inventory, neighbors);
+const peerEngine  = new PeerEngine(config, inventory, neighbors);
 
-// Configurar Express
+// ─── Servidor HTTP + API REST ─────────────────────────────────────────────────
+
 const app = express();
 app.use(express.json());
-
-// Servir arquivos estáticos da interface
 app.use(express.static(path.join(__dirname, 'public')));
-
-// Servir figurinhas PNG
 app.use('/stickers', express.static(path.join(__dirname, 'stickers')));
 
-// API REST para a UI
+// Status geral do nó
+app.get('/api/status', (req, res) => res.json({
+  peer_id:         config.peer_id,
+  sticker_id:      config.sticker_id,
+  port:            config.port,
+  connected_peers: neighbors.getConnectedPeers(),
+  inventory:       inventory.getAll(),
+  total_unique:    inventory.getTotalUnique(),
+  total_count:     inventory.getTotalCount(),
+}));
 
-// GET /api/status — Status do nó
-app.get('/api/status', (req, res) => {
-  res.json({
-    peer_id: config.peer_id,
-    sticker_id: config.sticker_id,
-    port: config.port,
-    connected_peers: neighborManager.getConnectedPeers(),
-    inventory: inventory.getAll(),
-    total_unique: inventory.getTotalUnique(),
-    total_count: inventory.getTotalCount(),
-  });
-});
+app.get('/api/inventory', (req, res) => res.json(inventory.getAll()));
 
-// GET /api/inventory — Inventário completo
-app.get('/api/inventory', (req, res) => {
-  res.json(inventory.getAll());
-});
+app.get('/api/neighbors', (req, res) => res.json({
+  configured: config.neighbors,
+  connected:  neighbors.getConnectedPeers(),
+}));
 
-// GET /api/neighbors — Lista de vizinhos
-app.get('/api/neighbors', (req, res) => {
-  res.json({
-    configured: config.neighbors,
-    connected: neighborManager.getConnectedPeers(),
-  });
-});
-
-// POST /api/neighbors — Adicionar vizinho
 app.post('/api/neighbors', (req, res) => {
   const { url } = req.body;
-  if (!url) {
-    return res.status(400).json({ error: 'URL do vizinho é obrigatória' });
-  }
-  neighborManager.addNeighbor(url);
-  // Persistir no config
-  if (!config.neighbors.includes(url)) {
-    config.neighbors.push(url);
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-  }
+  if (!url) return res.status(400).json({ error: 'URL obrigatória' });
+  _addNeighbor(url);
   res.json({ ok: true, url });
 });
 
-// Criar servidor HTTP
-const server = http.createServer(app);
+// ─── WebSocket ────────────────────────────────────────────────────────────────
 
-// Configurar WebSocket Server para peers P2P
-const wssPeer = new WebSocket.Server({ noServer: true });
+const server  = http.createServer(app);
+const wssPeer = new WebSocket.Server({ noServer: true }); // conexões com outros peers
+const wssUi   = new WebSocket.Server({ noServer: true }); // conexões com o browser local
 
-// Configurar WebSocket Server para UI local
-const wssUi = new WebSocket.Server({ noServer: true });
-
-// Clientes UI conectados
+// Clientes de UI conectados (pode haver mais de uma aba aberta)
 const uiClients = new Set();
 
-// Função de broadcast para UI
-function uiBroadcast(data) {
+function notifyUi(data) {
   for (const ws of uiClients) {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(data);
-    }
+    if (ws.readyState === WebSocket.OPEN) ws.send(data);
   }
 }
 
-// Inicializar Trade Manager e Peer Engine
-const tradeManager = new TradeManager(config.peer_id, inventory, neighborManager);
-const peerEngine = new PeerEngine(config, inventory, neighborManager, tradeManager);
-const messageHandler = new MessageHandler(peerEngine, tradeManager, uiBroadcast);
+// Roteamento de mensagens recebidas de peers → módulos internos
+const messageHandler = new MessageHandler(peerEngine, trades, notifyUi);
+neighbors.on('message', (msg, ws) => messageHandler.handle(msg, ws));
 
-// Eventos do inventário → UI
-inventory.on('updated', (items) => {
-  uiBroadcast(JSON.stringify({
-    type: 'inventory_update',
-    data: items,
-    total_unique: inventory.getTotalUnique(),
-    total_count: inventory.getTotalCount(),
-  }));
-});
+// Repassar eventos internos para a UI usando um helper genérico
+function forwardEvent(emitter, event, uiType) {
+  emitter.on(event, (data) => notifyUi(JSON.stringify({ type: uiType, data })));
+}
 
-// Eventos dos vizinhos → UI
-neighborManager.on('connected', (peerId) => {
-  uiBroadcast(JSON.stringify({
-    type: 'neighbor_connected',
-    data: { peer_id: peerId, peers: neighborManager.getConnectedPeers() },
-  }));
-});
+// Inventário
+forwardEvent(inventory, 'updated', 'inventory_update');
 
-neighborManager.on('disconnected', (peerId) => {
-  uiBroadcast(JSON.stringify({
-    type: 'neighbor_disconnected',
-    data: { peer_id: peerId, peers: neighborManager.getConnectedPeers() },
-  }));
-});
+// Vizinhos
+forwardEvent(neighbors, 'connected',    'neighbor_connected');
+forwardEvent(neighbors, 'disconnected', 'neighbor_disconnected');
 
-// Eventos de busca → UI
-peerEngine.on('search_started', (data) => {
-  uiBroadcast(JSON.stringify({ type: 'search_started', data }));
-});
+// Busca
+forwardEvent(peerEngine, 'search_started',  'search_started');
+forwardEvent(peerEngine, 'search_hit',      'search_hit');
+forwardEvent(peerEngine, 'search_hit_sent', 'search_hit_sent');
 
-peerEngine.on('search_hit', (data) => {
-  uiBroadcast(JSON.stringify({ type: 'search_hit', data }));
-});
+// Trocas
+forwardEvent(trades, 'trade_received',  'trade_received');
+forwardEvent(trades, 'trade_proposed',  'trade_proposed');
+forwardEvent(trades, 'trade_accepted',  'trade_accepted');
+forwardEvent(trades, 'trade_rejected',  'trade_rejected');
+forwardEvent(trades, 'trade_completed', 'trade_completed');
+forwardEvent(trades, 'trade_confirmed', 'trade_confirmed');
 
-peerEngine.on('search_hit_sent', (data) => {
-  uiBroadcast(JSON.stringify({ type: 'search_hit_sent', data }));
-});
+// ─── Conexões WebSocket de peers (entrada) ────────────────────────────────────
 
-// Eventos de troca → UI
-tradeManager.on('trade_received', (data) => {
-  uiBroadcast(JSON.stringify({ type: 'trade_received', data }));
-});
-
-tradeManager.on('trade_proposed', (data) => {
-  uiBroadcast(JSON.stringify({ type: 'trade_proposed', data }));
-});
-
-tradeManager.on('trade_accepted', (data) => {
-  uiBroadcast(JSON.stringify({ type: 'trade_accepted', data }));
-});
-
-tradeManager.on('trade_rejected', (data) => {
-  uiBroadcast(JSON.stringify({ type: 'trade_rejected', data }));
-});
-
-tradeManager.on('trade_completed', (data) => {
-  uiBroadcast(JSON.stringify({ type: 'trade_completed', data }));
-});
-
-tradeManager.on('trade_confirmed', (data) => {
-  uiBroadcast(JSON.stringify({ type: 'trade_confirmed', data }));
-});
-
-// Roteamento de mensagens dos vizinhos
-neighborManager.on('message', (msg, ws) => {
-  messageHandler.handle(msg, ws);
-});
-
-// Handler de conexões P2P (entrada)
 wssPeer.on('connection', (ws, req) => {
-  const remoteAddr = req.socket.remoteAddress;
-  console.log(`[WS] Conexão peer de entrada: ${remoteAddr}`);
-  neighborManager.handleIncoming(ws);
+  console.log(`[WS] Peer conectado de ${req.socket.remoteAddress}`);
+  neighbors.acceptIncoming(ws);
 });
 
-// Handler de conexões da UI
+// ─── Conexões WebSocket da UI ─────────────────────────────────────────────────
+
 wssUi.on('connection', (ws) => {
-  console.log('[UI] Cliente conectado');
+  console.log('[UI] Browser conectado');
   uiClients.add(ws);
 
-  // Enviar estado inicial
+  // Enviar estado inicial para o browser recém-conectado
   ws.send(JSON.stringify({
     type: 'init',
     data: {
-      peer_id: config.peer_id,
-      sticker_id: config.sticker_id,
-      inventory: inventory.getAll(),
-      total_unique: inventory.getTotalUnique(),
-      total_count: inventory.getTotalCount(),
-      peers: neighborManager.getConnectedPeers(),
-      pending_trades: tradeManager.getPendingTrades(),
-      trade_history: tradeManager.getTradeHistory(),
+      peer_id:        config.peer_id,
+      sticker_id:     config.sticker_id,
+      inventory:      inventory.getAll(),
+      total_unique:   inventory.getTotalUnique(),
+      total_count:    inventory.getTotalCount(),
+      peers:          neighbors.getConnectedPeers(),
+      pending_trades: trades.getPendingTrades(),
+      trade_history:  trades.getTradeHistory(),
     },
   }));
 
-  // Processar comandos da UI
-  ws.on('message', (data) => {
+  ws.on('message', (raw) => {
     try {
-      const cmd = JSON.parse(data.toString());
-      handleUiCommand(cmd, ws);
+      handleUiCommand(JSON.parse(raw.toString()), ws);
     } catch (err) {
-      console.error('[UI] Erro ao processar comando:', err.message);
       ws.send(JSON.stringify({ type: 'error', data: { message: err.message } }));
     }
   });
 
   ws.on('close', () => {
-    console.log('[UI] Cliente desconectado');
+    console.log('[UI] Browser desconectado');
     uiClients.delete(ws);
   });
 });
 
-// Comandos da UI
+// Comandos enviados pelo browser via WebSocket
 function handleUiCommand(cmd, ws) {
+  const send = (type, data) => ws.send(JSON.stringify({ type, data }));
+
   switch (cmd.action) {
     case 'search': {
       const queryId = peerEngine.search(cmd.sticker_id);
-      ws.send(JSON.stringify({
-        type: 'search_initiated',
-        data: { query_id: queryId, sticker_id: cmd.sticker_id },
-      }));
+      send('search_initiated', { query_id: queryId, sticker_id: cmd.sticker_id });
       break;
     }
 
-    case 'trade_propose': {
-      try {
-        const trade = tradeManager.proposeTrade(
-          cmd.target_peer_id,
-          cmd.offer_sticker_id,
-          cmd.offer_qty || 1,
-          cmd.want_sticker_id,
-          cmd.want_qty || 1,
-        );
-        ws.send(JSON.stringify({ type: 'trade_proposed', data: trade }));
-      } catch (err) {
-        ws.send(JSON.stringify({ type: 'error', data: { message: err.message } }));
-      }
+    case 'get_search_results':
+      send('search_results', { query_id: cmd.query_id, results: peerEngine.getSearchResults(cmd.query_id) });
       break;
-    }
 
-    case 'trade_accept': {
-      try {
-        tradeManager.acceptTrade(cmd.trade_id);
-      } catch (err) {
-        ws.send(JSON.stringify({ type: 'error', data: { message: err.message } }));
-      }
+    case 'trade_propose':
+      send('trade_proposed', trades.proposeTrade(cmd.target_peer_id, cmd.offer_sticker_id, cmd.want_sticker_id));
       break;
-    }
 
-    case 'trade_reject': {
-      try {
-        tradeManager.rejectTrade(cmd.trade_id, cmd.reason);
-      } catch (err) {
-        ws.send(JSON.stringify({ type: 'error', data: { message: err.message } }));
-      }
+    case 'trade_accept':
+      trades.acceptTrade(cmd.trade_id);
       break;
-    }
 
-    case 'add_neighbor': {
-      neighborManager.addNeighbor(cmd.url);
-      if (!config.neighbors.includes(cmd.url)) {
-        config.neighbors.push(cmd.url);
-        fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-      }
-      ws.send(JSON.stringify({ type: 'neighbor_added', data: { url: cmd.url } }));
+    case 'trade_reject':
+      trades.rejectTrade(cmd.trade_id, cmd.reason);
       break;
-    }
 
-    case 'get_status': {
-      ws.send(JSON.stringify({
-        type: 'status',
-        data: {
-          peer_id: config.peer_id,
-          sticker_id: config.sticker_id,
-          inventory: inventory.getAll(),
-          total_unique: inventory.getTotalUnique(),
-          total_count: inventory.getTotalCount(),
-          peers: neighborManager.getConnectedPeers(),
-          pending_trades: tradeManager.getPendingTrades(),
-          trade_history: tradeManager.getTradeHistory(),
-        },
-      }));
+    case 'add_neighbor':
+      _addNeighbor(cmd.url);
+      send('neighbor_added', { url: cmd.url });
       break;
-    }
 
-    case 'get_search_results': {
-      const results = peerEngine.getSearchResults(cmd.query_id);
-      ws.send(JSON.stringify({
-        type: 'search_results',
-        data: { query_id: cmd.query_id, results },
-      }));
+    case 'get_status':
+      send('status', {
+        peer_id:        config.peer_id,
+        sticker_id:     config.sticker_id,
+        inventory:      inventory.getAll(),
+        total_unique:   inventory.getTotalUnique(),
+        total_count:    inventory.getTotalCount(),
+        peers:          neighbors.getConnectedPeers(),
+        pending_trades: trades.getPendingTrades(),
+        trade_history:  trades.getTradeHistory(),
+      });
       break;
-    }
 
     default:
       console.warn(`[UI] Comando desconhecido: ${cmd.action}`);
-      ws.send(JSON.stringify({ type: 'error', data: { message: `Comando desconhecido: ${cmd.action}` } }));
+      send('error', { message: `Comando desconhecido: ${cmd.action}` });
   }
 }
 
-// Upgrade HTTP → WebSocket (diferenciar entre peer e UI)
-server.on('upgrade', (request, socket, head) => {
-  const { pathname } = new URL(request.url, `http://localhost:${config.port}`);
+// ─── Roteamento de upgrade HTTP → WebSocket ────────────────────────────────────
+
+server.on('upgrade', (req, socket, head) => {
+  const { pathname } = new URL(req.url, `http://localhost:${config.port}`);
 
   if (pathname === '/ws/ui') {
-    wssUi.handleUpgrade(request, socket, head, (ws) => {
-      wssUi.emit('connection', ws, request);
-    });
+    wssUi.handleUpgrade(req, socket, head, (ws) => wssUi.emit('connection', ws, req));
   } else {
-    // Qualquer outra rota WS é tratada como peer P2P
-    wssPeer.handleUpgrade(request, socket, head, (ws) => {
-      wssPeer.emit('connection', ws, request);
-    });
+    // Toda outra rota WebSocket é tratada como conexão P2P
+    wssPeer.handleUpgrade(req, socket, head, (ws) => wssPeer.emit('connection', ws, req));
   }
 });
 
-// Iniciar servidor
+// ─── Inicialização ────────────────────────────────────────────────────────────
+
 server.listen(config.port, () => {
-  console.log(`\n🌐 Servidor HTTP:  http://localhost:${config.port}`);
+  console.log(`\n🌐 Interface:      http://localhost:${config.port}`);
   console.log(`🔗 WebSocket P2P:  ws://localhost:${config.port}/ws/peer`);
   console.log(`🖥️  WebSocket UI:   ws://localhost:${config.port}/ws/ui`);
-  console.log(`📂 Figurinhas:     http://localhost:${config.port}/stickers/`);
   console.log(`\n📋 Inventário inicial:`, inventory.getAll());
-  console.log(`👥 Vizinhos configurados: ${config.neighbors.length}`);
 
-  // Conectar aos vizinhos configurados
-  if (config.neighbors.length > 0) {
-    console.log('\n🔄 Conectando aos vizinhos...');
-    neighborManager.connectToAll();
+  if (config.neighbors?.length > 0) {
+    console.log(`\n🔄 Conectando a ${config.neighbors.length} vizinhos...`);
+    neighbors.connectToAll(config.neighbors);
   } else {
     console.log('\n⚠️  Nenhum vizinho configurado. Adicione via interface ou config.json');
   }
@@ -353,12 +235,20 @@ server.listen(config.port, () => {
   console.log('\n✅ Sistema pronto!\n');
 });
 
-// Graceful shutdown
+// Encerrar com limpeza ao pressionar Ctrl+C
 process.on('SIGINT', () => {
   console.log('\n🛑 Encerrando...');
-  neighborManager.disconnectAll();
-  server.close(() => {
-    console.log('Servidor encerrado.');
-    process.exit(0);
-  });
+  neighbors.disconnectAll();
+  server.close(() => { console.log('Servidor encerrado.'); process.exit(0); });
 });
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function _addNeighbor(url) {
+  neighbors.addNeighbor(url);
+  // Persistir no config.json para que o vizinho seja reconectado no próximo start
+  if (!config.neighbors.includes(url)) {
+    config.neighbors.push(url);
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+  }
+}

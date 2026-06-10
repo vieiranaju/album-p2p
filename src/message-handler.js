@@ -1,27 +1,28 @@
-// message-handler.js — Roteamento central de mensagens recebidas
+// message-handler.js — Roteador central: recebe mensagens dos peers e despacha para o módulo certo
 const { MSG_TYPES } = require('./protocol');
 
 class MessageHandler {
-  constructor(peerEngine, tradeManager, uiBroadcast) {
-    this.peerEngine = peerEngine;
+  constructor(peerEngine, tradeManager, notifyUi) {
+    this.peerEngine   = peerEngine;
     this.tradeManager = tradeManager;
-    this.uiBroadcast = uiBroadcast; // Função para enviar eventos para a UI
+    this.notifyUi     = notifyUi; // função que envia eventos para o browser
   }
 
-  // Processar mensagem recebida de um vizinho
+  // Processar qualquer mensagem recebida de um peer
   handle(msg, sourceWs) {
-    if (!msg || !msg.type) {
-      console.warn('[HANDLER] Mensagem inválida recebida:', msg);
+    if (!msg?.type) {
+      console.warn('[HANDLER] Mensagem sem tipo recebida:', msg);
       return;
     }
 
-    // Log para UI
-    this._logToUi('incoming', msg);
+    // Encaminhar para o log da UI
+    this.notifyUi(JSON.stringify({ type: 'log', direction: 'incoming', message: msg }));
 
+    // Despachar para o módulo responsável
     switch (msg.type) {
       case MSG_TYPES.HELLO:
-        // Já tratado pelo NeighborManager
-        this._notifyUi('neighbor_update');
+        // HELLO já é tratado pelo NeighborManager; aqui apenas notificamos a UI
+        this.notifyUi(JSON.stringify({ type: 'neighbor_update' }));
         break;
 
       case MSG_TYPES.SEARCH:
@@ -54,28 +55,6 @@ class MessageHandler {
 
       default:
         console.warn(`[HANDLER] Tipo desconhecido: ${msg.type}`);
-    }
-  }
-
-  _notifyUi(event, data) {
-    if (this.uiBroadcast) {
-      this.uiBroadcast(JSON.stringify({
-        type: 'ui_event',
-        event: event,
-        data: data,
-        timestamp: Date.now(),
-      }));
-    }
-  }
-
-  _logToUi(direction, msg) {
-    if (this.uiBroadcast) {
-      this.uiBroadcast(JSON.stringify({
-        type: 'log',
-        direction: direction,
-        message: msg,
-        timestamp: Date.now(),
-      }));
     }
   }
 }

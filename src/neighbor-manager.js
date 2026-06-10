@@ -1,240 +1,154 @@
-// neighbor-manager.js — Gerenciamento de vizinhos e conexões WebSocket
+// neighbor-manager.js — Gerencia conexões WebSocket com outros peers da rede
 const WebSocket = require('ws');
 const EventEmitter = require('events');
 const { buildHello } = require('./protocol');
+
+const RECONNECT_DELAY_MS = 3000; // Tempo de espera antes de tentar reconectar
 
 class NeighborManager extends EventEmitter {
   constructor(config) {
     super();
     this.peerId = config.peer_id;
-    this.stickerId = config.sticker_id;
-    this.neighborUrls = config.neighbors || [];
 
     // Map<peerId, { ws, url, direction }>
-    this.connections = new Map();
-    // Map<url, reconnectTimer>
-    this.reconnectTimers = new Map();
-
-    this.RECONNECT_BASE_MS = 3000;
-    this.RECONNECT_MAX_MS = 30000;
-    this.reconnectAttempts = new Map(); // Map<url, attemptCount>
+    // Guarda a conexão WebSocket de cada vizinho conhecido
+    this.peers = new Map();
   }
 
-  // Iniciar conexões com todos os vizinhos configurados
-  connectToAll() {
-    for (const url of this.neighborUrls) {
-      this._connectTo(url);
+  // Conectar a todos os vizinhos listados no config
+  connectToAll(urls) {
+    for (const url of urls) {
+      this._connect(url);
     }
   }
 
-  // Conectar a um vizinho específico
-  _connectTo(url) {
-    if (this._isConnectedToUrl(url)) {
-      console.log(`[VIZINHOS] Já conectado a ${url}`);
+  // Abrir conexão de saída para um vizinho pelo URL
+  _connect(url) {
+    if (this._isOpen(url)) return;
+
+    console.log(`[VIZINHOS] Conectando a ${url}...`);
+    const ws = new WebSocket(url);
+
+    ws.on('open',    ()    => this._onOpen(ws, url));
+    ws.on('message', (raw) => this._onMessage(ws, raw, url, 'outbound'));
+    ws.on('close',   ()    => this._onClose(ws, url));
+    ws.on('error',   (err) => console.error(`[VIZINHOS] Erro em ${url}: ${err.message}`));
+  }
+
+  // Registrar uma conexão de entrada (outro peer conectou a este nó)
+  acceptIncoming(ws) {
+    ws.on('message', (raw) => this._onMessage(ws, raw, null, 'inbound'));
+    ws.on('close',   ()    => this._onClose(ws, null));
+    ws.on('error',   (err) => console.error(`[VIZINHOS] Erro (entrada): ${err.message}`));
+  }
+
+  // --- Handlers internos ---
+
+  _onOpen(ws, url) {
+    console.log(`[VIZINHOS] Conectado a ${url}`);
+    ws.send(JSON.stringify(buildHello(this.peerId)));
+  }
+
+  _onMessage(ws, raw, url, direction) {
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      console.error('[VIZINHOS] Mensagem inválida (não é JSON)');
       return;
     }
 
-    console.log(`[VIZINHOS] Conectando a ${url}...`);
+    // O HELLO identifica quem está do outro lado — registrar a conexão
+    if (msg.type === 'HELLO' && msg.sender_peer_id) {
+      this._register(msg.sender_peer_id, ws, url, direction);
 
-    try {
-      const ws = new WebSocket(url);
-
-      ws._peerUrl = url;
-
-      ws.on('open', () => {
-        console.log(`[VIZINHOS] Conectado a ${url}`);
-        this.reconnectAttempts.set(url, 0);
-
-        // Enviar HELLO
-        const hello = buildHello(this.peerId, this.stickerId);
-        ws.send(JSON.stringify(hello));
-      });
-
-      ws.on('message', (data) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          
-          // Se recebemos HELLO, registrar o peer
-          if (msg.type === 'HELLO' && msg.peer_id) {
-            this._registerConnection(msg.peer_id, ws, url, 'outbound');
-          }
-
-          this.emit('message', msg, ws);
-        } catch (err) {
-          console.error('[VIZINHOS] Erro ao parsear mensagem:', err.message);
-        }
-      });
-
-      ws.on('close', () => {
-        const peerId = this._getPeerIdByWs(ws);
-        if (peerId) {
-          console.log(`[VIZINHOS] Desconectado de ${peerId} (${url})`);
-          this.connections.delete(peerId);
-          this.emit('disconnected', peerId);
-        }
-        this._scheduleReconnect(url);
-      });
-
-      ws.on('error', (err) => {
-        console.error(`[VIZINHOS] Erro com ${url}:`, err.message);
-      });
-    } catch (err) {
-      console.error(`[VIZINHOS] Falha ao conectar a ${url}:`, err.message);
-      this._scheduleReconnect(url);
+      // Conexões de entrada exigem que respondamos com HELLO
+      if (direction === 'inbound') {
+        ws.send(JSON.stringify(buildHello(this.peerId)));
+      }
     }
+
+    this.emit('message', msg, ws);
   }
 
-  // Registrar conexão de entrada (outro nó conectou a este)
-  handleIncoming(ws) {
-    ws.on('message', (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-
-        // Se recebemos HELLO, registrar o peer
-        if (msg.type === 'HELLO' && msg.peer_id) {
-          this._registerConnection(msg.peer_id, ws, null, 'inbound');
-          // Responder com HELLO
-          const hello = buildHello(this.peerId, this.stickerId);
-          ws.send(JSON.stringify(hello));
-        }
-
-        this.emit('message', msg, ws);
-      } catch (err) {
-        console.error('[VIZINHOS] Erro ao parsear mensagem (inbound):', err.message);
-      }
-    });
-
-    ws.on('close', () => {
-      const peerId = this._getPeerIdByWs(ws);
-      if (peerId) {
-        console.log(`[VIZINHOS] Vizinho ${peerId} desconectou`);
-        this.connections.delete(peerId);
+  _onClose(ws, url) {
+    // Encontrar e remover o peer que desconectou
+    for (const [peerId, peer] of this.peers) {
+      if (peer.ws === ws) {
+        console.log(`[VIZINHOS] Desconectado: ${peerId}`);
+        this.peers.delete(peerId);
         this.emit('disconnected', peerId);
-      }
-    });
-
-    ws.on('error', (err) => {
-      console.error('[VIZINHOS] Erro (inbound):', err.message);
-    });
-  }
-
-  _registerConnection(peerId, ws, url, direction) {
-    // Evitar registrar a si mesmo
-    if (peerId === this.peerId) return;
-
-    // Se já existe conexão com este peer, substituir apenas se estiver fechada
-    if (this.connections.has(peerId)) {
-      const existing = this.connections.get(peerId);
-      if (existing.ws.readyState === WebSocket.OPEN) {
-        return; // Já conectado
+        break;
       }
     }
 
-    this.connections.set(peerId, { ws, url, direction, peerId });
-    console.log(`[VIZINHOS] ✓ Registrado: ${peerId} (${direction})`);
+    // Reconectar automaticamente apenas em conexões de saída
+    if (url) {
+      setTimeout(() => this._connect(url), RECONNECT_DELAY_MS);
+    }
+  }
+
+  _register(peerId, ws, url, direction) {
+    if (peerId === this.peerId) return; // Não registrar a si mesmo
+    if (this._isOpen(null, peerId)) return; // Já conectado a este peer
+
+    this.peers.set(peerId, { ws, url, direction });
+    console.log(`[VIZINHOS] ✓ ${peerId} registrado (${direction})`);
     this.emit('connected', peerId);
   }
 
-  _getPeerIdByWs(ws) {
-    for (const [peerId, conn] of this.connections) {
-      if (conn.ws === ws) return peerId;
-    }
-    return null;
-  }
-
-  _isConnectedToUrl(url) {
-    for (const [, conn] of this.connections) {
-      if (conn.url === url && conn.ws.readyState === WebSocket.OPEN) return true;
+  // Verifica se já há conexão aberta para uma URL ou peerId
+  _isOpen(url, peerId) {
+    for (const [id, peer] of this.peers) {
+      const open = peer.ws.readyState === WebSocket.OPEN;
+      if (peerId && id === peerId && open) return true;
+      if (url && peer.url === url && open) return true;
     }
     return false;
   }
 
-  _scheduleReconnect(url) {
-    if (this.reconnectTimers.has(url)) return;
+  // --- API pública ---
 
-    const attempts = this.reconnectAttempts.get(url) || 0;
-    const delay = Math.min(
-      this.RECONNECT_BASE_MS * Math.pow(2, attempts),
-      this.RECONNECT_MAX_MS
-    );
-
-    console.log(`[VIZINHOS] Reconectando a ${url} em ${delay / 1000}s...`);
-
-    const timer = setTimeout(() => {
-      this.reconnectTimers.delete(url);
-      this.reconnectAttempts.set(url, attempts + 1);
-      this._connectTo(url);
-    }, delay);
-
-    this.reconnectTimers.set(url, timer);
-  }
-
-  // Enviar mensagem para um peer específico
+  // Enviar mensagem para um peer pelo seu ID
   sendTo(peerId, msg) {
-    const conn = this.connections.get(peerId);
-    if (conn && conn.ws.readyState === WebSocket.OPEN) {
-      conn.ws.send(JSON.stringify(msg));
+    const peer = this.peers.get(peerId);
+    if (peer?.ws.readyState === WebSocket.OPEN) {
+      peer.ws.send(JSON.stringify(msg));
       return true;
     }
-    console.warn(`[VIZINHOS] Não é possível enviar para ${peerId}: não conectado`);
+    console.warn(`[VIZINHOS] Não conectado a ${peerId}`);
     return false;
   }
 
-  // Broadcast para todos os vizinhos, exceto excludePeerId
-  broadcast(msg, excludePeerId) {
-    let count = 0;
-    for (const [peerId, conn] of this.connections) {
-      if (peerId === excludePeerId) continue;
-      if (conn.ws.readyState === WebSocket.OPEN) {
-        conn.ws.send(JSON.stringify(msg));
-        count++;
-      }
-    }
-    return count;
-  }
-
-  // Encaminhar mensagem de volta pelo caminho de onde veio (para SEARCH_HIT)
+  // Enviar mensagem diretamente por um WebSocket (usado para roteamento reverso de SEARCH_HIT)
   sendToWs(ws, msg) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
       return true;
     }
     return false;
   }
 
+  // Adicionar vizinho em tempo de execução (via UI ou API)
+  addNeighbor(url) {
+    this._connect(url);
+  }
+
+  // Lista de peers atualmente conectados
   getConnectedPeers() {
-    const peers = [];
-    for (const [peerId, conn] of this.connections) {
-      if (conn.ws.readyState === WebSocket.OPEN) {
-        peers.push({ peer_id: peerId, direction: conn.direction });
+    const result = [];
+    for (const [peerId, peer] of this.peers) {
+      if (peer.ws.readyState === WebSocket.OPEN) {
+        result.push({ peer_id: peerId, direction: peer.direction });
       }
     }
-    return peers;
+    return result;
   }
 
-  isConnected(peerId) {
-    const conn = this.connections.get(peerId);
-    return conn && conn.ws.readyState === WebSocket.OPEN;
-  }
-
-  // Adicionar vizinho dinamicamente
-  addNeighbor(url) {
-    if (!this.neighborUrls.includes(url)) {
-      this.neighborUrls.push(url);
-    }
-    this._connectTo(url);
-  }
-
-  // Desconectar de todos
+  // Fechar todas as conexões (chamado no shutdown)
   disconnectAll() {
-    for (const [, conn] of this.connections) {
-      conn.ws.close();
-    }
-    for (const [, timer] of this.reconnectTimers) {
-      clearTimeout(timer);
-    }
-    this.connections.clear();
-    this.reconnectTimers.clear();
+    for (const peer of this.peers.values()) peer.ws.close();
+    this.peers.clear();
   }
 }
 
