@@ -1,0 +1,518 @@
+// app.js — Frontend logic: WebSocket connection to local server and UI rendering
+(function () {
+  'use strict';
+
+  // ===== STATE =====
+  let ws = null;
+  let state = {
+    peer_id: '—',
+    sticker_id: '—',
+    inventory: {},
+    total_unique: 0,
+    total_count: 0,
+    peers: [],
+    pending_trades: [],
+    trade_history: [],
+    search_results: {},
+  };
+
+  let currentIncomingTrade = null;
+
+  // ===== DOM ELEMENTS =====
+  const $ = (id) => document.getElementById(id);
+  const peerIdEl = $('peer-id-display');
+  const stickerIdEl = $('sticker-id-display');
+  const connectionStatus = $('connection-status');
+  const statUnique = $('stat-unique');
+  const statTotal = $('stat-total');
+  const statPeers = $('stat-peers');
+  const inventoryGrid = $('inventory-grid');
+  const inventoryCount = $('inventory-count');
+  const neighborsList = $('neighbors-list');
+  const neighborsCount = $('neighbors-count');
+  const searchInput = $('search-input');
+  const searchBtn = $('search-btn');
+  const searchResults = $('search-results');
+  const tradePending = $('trade-pending');
+  const tradeHistory = $('trade-history');
+  const pendingTradesCount = $('pending-trades-count');
+  const logContainer = $('log-container');
+  const neighborUrlInput = $('neighbor-url-input');
+  const addNeighborBtn = $('add-neighbor-btn');
+  const clearLogBtn = $('clear-log-btn');
+
+  // Modals
+  const tradeModal = $('trade-modal');
+  const tradeModalClose = $('trade-modal-close');
+  const tradeCancelBtn = $('trade-cancel-btn');
+  const tradeSubmitBtn = $('trade-submit-btn');
+  const tradeTargetPeer = $('trade-target-peer');
+  const tradeOfferSticker = $('trade-offer-sticker');
+  const tradeOfferQty = $('trade-offer-qty');
+  const tradeWantSticker = $('trade-want-sticker');
+  const tradeWantQty = $('trade-want-qty');
+
+  const incomingTradeModal = $('incoming-trade-modal');
+  const incomingTradeDetails = $('incoming-trade-details');
+  const incomingAcceptBtn = $('incoming-accept-btn');
+  const incomingRejectBtn = $('incoming-reject-btn');
+
+  // ===== WEBSOCKET =====
+  function connect() {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${protocol}//${location.host}/ws/ui`;
+    addLog('Conectando a ' + url + '...', 'info');
+
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+      connectionStatus.className = 'status-indicator connected';
+      connectionStatus.querySelector('.status-text').textContent = 'Conectado';
+      addLog('✓ Conectado ao servidor', 'info');
+    };
+
+    ws.onclose = () => {
+      connectionStatus.className = 'status-indicator disconnected';
+      connectionStatus.querySelector('.status-text').textContent = 'Desconectado';
+      addLog('✗ Desconectado. Reconectando em 3s...', 'error');
+      setTimeout(connect, 3000);
+    };
+
+    ws.onerror = () => {
+      addLog('Erro na conexão WebSocket', 'error');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        handleServerMessage(msg);
+      } catch (e) {
+        console.error('Parse error:', e);
+      }
+    };
+  }
+
+  function send(data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(data));
+    }
+  }
+
+  // ===== MESSAGE HANDLER =====
+  function handleServerMessage(msg) {
+    switch (msg.type) {
+      case 'init':
+        state = { ...state, ...msg.data };
+        renderAll();
+        addLog(`Nó: ${state.peer_id} | Figurinha: ${state.sticker_id}`, 'info');
+        break;
+
+      case 'inventory_update':
+        state.inventory = msg.data;
+        state.total_unique = msg.total_unique;
+        state.total_count = msg.total_count;
+        renderInventory();
+        renderStats();
+        break;
+
+      case 'neighbor_connected':
+        state.peers = msg.data.peers;
+        renderNeighbors();
+        renderStats();
+        addLog(`👥 Vizinho conectado: ${msg.data.peer_id}`, 'incoming');
+        break;
+
+      case 'neighbor_disconnected':
+        state.peers = msg.data.peers;
+        renderNeighbors();
+        renderStats();
+        addLog(`👥 Vizinho desconectado: ${msg.data.peer_id}`, 'error');
+        break;
+
+      case 'search_initiated':
+        addLog(`🔍 Busca iniciada: ${msg.data.sticker_id} (${msg.data.query_id.substring(0, 8)}...)`, 'outgoing');
+        if (!state.search_results[msg.data.query_id]) {
+          state.search_results[msg.data.query_id] = { sticker_id: msg.data.sticker_id, hits: [] };
+        }
+        break;
+
+      case 'search_started':
+        break;
+
+      case 'search_hit':
+        addLog(`✓ HIT: ${msg.data.owner_peer_id} tem ${msg.data.quantity}x ${msg.data.sticker_id}`, 'incoming');
+        if (state.search_results[msg.data.query_id]) {
+          state.search_results[msg.data.query_id].hits.push(msg.data);
+        }
+        renderSearchResults();
+        break;
+
+      case 'search_hit_sent':
+        addLog(`📤 HIT enviado: ${msg.data.quantity}x ${msg.data.sticker_id}`, 'outgoing');
+        break;
+
+      case 'trade_received':
+        addLog(`📨 Proposta recebida de ${msg.data.initiator}`, 'trade');
+        currentIncomingTrade = msg.data;
+        showIncomingTradeModal(msg.data);
+        state.pending_trades.push(msg.data);
+        renderTrades();
+        break;
+
+      case 'trade_proposed':
+        addLog(`📤 Proposta enviada para ${msg.data.target}`, 'trade');
+        state.pending_trades.push(msg.data);
+        renderTrades();
+        break;
+
+      case 'trade_accepted':
+        addLog(`✓ Troca aceita: ${msg.data.trade_id.substring(0, 8)}...`, 'trade');
+        removePendingTrade(msg.data.trade_id);
+        state.trade_history.unshift(msg.data);
+        renderTrades();
+        break;
+
+      case 'trade_rejected':
+        addLog(`✗ Troca rejeitada: ${msg.data.reason || 'sem motivo'}`, 'error');
+        removePendingTrade(msg.data.trade_id);
+        state.trade_history.unshift(msg.data);
+        renderTrades();
+        break;
+
+      case 'trade_completed':
+        addLog(`✓ Troca concluída!`, 'trade');
+        removePendingTrade(msg.data.trade_id);
+        state.trade_history.unshift(msg.data);
+        renderTrades();
+        break;
+
+      case 'trade_confirmed':
+        addLog(`✓ Transferência confirmada`, 'trade');
+        break;
+
+      case 'log':
+        if (msg.message && msg.message.type) {
+          const dir = msg.direction === 'incoming' ? '⬇️' : '⬆️';
+          addLog(`${dir} ${msg.message.type} de ${msg.message.peer_id || '?'}`, msg.direction);
+        }
+        break;
+
+      case 'error':
+        addLog(`❌ Erro: ${msg.data.message}`, 'error');
+        break;
+
+      case 'ui_event':
+        break;
+
+      case 'status':
+        state = { ...state, ...msg.data };
+        renderAll();
+        break;
+
+      default:
+        console.log('Unknown msg type:', msg.type);
+    }
+  }
+
+  function removePendingTrade(tradeId) {
+    state.pending_trades = state.pending_trades.filter(t => t.trade_id !== tradeId);
+  }
+
+  // ===== RENDERERS =====
+  function renderAll() {
+    peerIdEl.textContent = state.peer_id;
+    stickerIdEl.textContent = state.sticker_id;
+    renderStats();
+    renderInventory();
+    renderNeighbors();
+    renderTrades();
+  }
+
+  function renderStats() {
+    statUnique.textContent = state.total_unique;
+    statTotal.textContent = state.total_count;
+    statPeers.textContent = state.peers.length;
+  }
+
+  function renderInventory() {
+    const items = state.inventory;
+    const keys = Object.keys(items).sort();
+    inventoryCount.textContent = keys.length;
+
+    if (keys.length === 0) {
+      inventoryGrid.innerHTML = '<div class="empty-state">Inventário vazio</div>';
+      return;
+    }
+
+    inventoryGrid.innerHTML = keys.map(id => {
+      const qty = items[id];
+      const isOwn = id === state.sticker_id;
+      return `<div class="sticker-card${isOwn ? ' own' : ''}">
+        <div class="sticker-icon">${isOwn ? '⭐' : '🎴'}</div>
+        <div class="sticker-name">${id}</div>
+        <div class="sticker-qty">×${qty}</div>
+      </div>`;
+    }).join('');
+
+    // Update trade offer dropdown
+    updateTradeOfferDropdown(keys, items);
+  }
+
+  function updateTradeOfferDropdown(keys, items) {
+    tradeOfferSticker.innerHTML = keys.map(id =>
+      `<option value="${id}">${id} (×${items[id]})</option>`
+    ).join('');
+  }
+
+  function renderNeighbors() {
+    const peers = state.peers;
+    neighborsCount.textContent = peers.length;
+
+    if (peers.length === 0) {
+      neighborsList.innerHTML = '<div class="empty-state">Nenhum vizinho conectado</div>';
+      return;
+    }
+
+    neighborsList.innerHTML = peers.map(p => `
+      <div class="neighbor-item">
+        <div>
+          <span class="neighbor-id">${p.peer_id}</span>
+          <span class="neighbor-dir">(${p.direction})</span>
+        </div>
+        <span class="neighbor-dot"></span>
+      </div>
+    `).join('');
+  }
+
+  function renderSearchResults() {
+    const queries = Object.entries(state.search_results);
+    if (queries.length === 0) {
+      searchResults.innerHTML = '<div class="empty-state">Nenhuma busca realizada</div>';
+      return;
+    }
+
+    let html = '';
+    // Show most recent first
+    for (let i = queries.length - 1; i >= 0; i--) {
+      const [queryId, data] = queries[i];
+      html += `<div class="search-query-group">
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">
+          🔍 ${data.sticker_id} <span style="opacity:0.5">(${queryId.substring(0, 8)}...)</span>
+        </div>`;
+      if (data.hits.length === 0) {
+        html += '<div class="empty-state" style="padding:6px">Aguardando resultados...</div>';
+      } else {
+        for (const hit of data.hits) {
+          html += `<div class="search-hit">
+            <div class="search-hit-info">
+              <span class="search-hit-peer">${hit.owner_peer_id}</span>
+              <span class="search-hit-qty">${hit.quantity}× disponíveis</span>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="app.openTrade('${hit.owner_peer_id}', '${hit.sticker_id}')">
+              Trocar
+            </button>
+          </div>`;
+        }
+      }
+      html += '</div>';
+    }
+    searchResults.innerHTML = html;
+  }
+
+  function renderTrades() {
+    // Pending
+    const pending = state.pending_trades.filter(t => t.status === 'PENDING');
+    const pendingCount = pending.length;
+    pendingTradesCount.textContent = pendingCount;
+    pendingTradesCount.style.display = pendingCount > 0 ? 'inline' : 'none';
+
+    if (pending.length === 0) {
+      tradePending.innerHTML = '<div class="empty-state">Nenhuma troca pendente</div>';
+    } else {
+      tradePending.innerHTML = pending.map(t => {
+        const isIncoming = t.direction === 'incoming';
+        const peer = isIncoming ? t.initiator : t.target;
+        const actions = isIncoming ? `
+          <div class="trade-item-actions">
+            <button class="btn btn-success btn-sm" onclick="app.acceptTrade('${t.trade_id}')">Aceitar</button>
+            <button class="btn btn-danger btn-sm" onclick="app.rejectTrade('${t.trade_id}')">Recusar</button>
+          </div>` : '<span style="font-size:0.72rem;color:var(--text-muted)">Aguardando resposta...</span>';
+        return `<div class="trade-item">
+          <div class="trade-item-header">
+            <span class="trade-item-peer">${isIncoming ? '📨' : '📤'} ${peer}</span>
+            <span class="trade-item-status pending">Pendente</span>
+          </div>
+          <div class="trade-item-detail">
+            ${isIncoming
+              ? `Oferece ${t.offer_qty}× ${t.offer_sticker_id} · Quer ${t.want_qty}× ${t.want_sticker_id}`
+              : `Ofereço ${t.offer_qty}× ${t.offer_sticker_id} · Quero ${t.want_qty}× ${t.want_sticker_id}`}
+          </div>
+          ${actions}
+        </div>`;
+      }).join('');
+    }
+
+    // History
+    if (state.trade_history.length === 0) {
+      tradeHistory.innerHTML = '<div class="empty-state">Nenhuma troca realizada</div>';
+    } else {
+      tradeHistory.innerHTML = state.trade_history.slice(0, 20).map(t => {
+        const statusClass = (t.status || '').toLowerCase();
+        const statusLabel = t.status === 'CONFIRMED' ? 'Concluída' : t.status === 'ACCEPTED' ? 'Aceita' : t.status === 'REJECTED' ? 'Rejeitada' : t.status;
+        const peer = t.direction === 'incoming' ? t.initiator : t.target;
+        return `<div class="trade-item">
+          <div class="trade-item-header">
+            <span class="trade-item-peer">${peer}</span>
+            <span class="trade-item-status ${statusClass}">${statusLabel}</span>
+          </div>
+          <div class="trade-item-detail">
+            ${t.offer_qty}× ${t.offer_sticker_id} ⇄ ${t.want_qty}× ${t.want_sticker_id}
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // ===== LOG =====
+  function addLog(text, type) {
+    const entry = document.createElement('div');
+    entry.className = `log-entry log-${type || 'info'}`;
+    const time = new Date().toLocaleTimeString('pt-BR');
+    entry.textContent = `[${time}] ${text}`;
+    logContainer.appendChild(entry);
+    logContainer.scrollTop = logContainer.scrollHeight;
+
+    // Keep max 200 entries
+    while (logContainer.children.length > 200) {
+      logContainer.removeChild(logContainer.firstChild);
+    }
+  }
+
+  // ===== MODALS =====
+  function showTradeModal(targetPeer, wantSticker) {
+    tradeTargetPeer.value = targetPeer || '';
+    tradeWantSticker.value = wantSticker || '';
+    tradeOfferQty.value = 1;
+    tradeWantQty.value = 1;
+    tradeModal.style.display = 'flex';
+  }
+
+  function hideTradeModal() {
+    tradeModal.style.display = 'none';
+  }
+
+  function showIncomingTradeModal(trade) {
+    incomingTradeDetails.innerHTML = `
+      <p><strong>De:</strong> <span class="highlight">${trade.initiator}</span></p>
+      <p><strong>Oferece:</strong> <span class="highlight">${trade.offer_qty}× ${trade.offer_sticker_id}</span></p>
+      <p><strong>Quer:</strong> <span class="highlight">${trade.want_qty}× ${trade.want_sticker_id}</span></p>
+    `;
+    incomingTradeModal.style.display = 'flex';
+  }
+
+  function hideIncomingTradeModal() {
+    incomingTradeModal.style.display = 'none';
+    currentIncomingTrade = null;
+  }
+
+  // ===== EVENT LISTENERS =====
+  searchBtn.addEventListener('click', () => {
+    const stickerId = searchInput.value.trim().toUpperCase();
+    if (!stickerId) return;
+    send({ action: 'search', sticker_id: stickerId });
+    searchInput.value = '';
+  });
+
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') searchBtn.click();
+  });
+
+  addNeighborBtn.addEventListener('click', () => {
+    const url = neighborUrlInput.value.trim();
+    if (!url) return;
+    send({ action: 'add_neighbor', url });
+    neighborUrlInput.value = '';
+    addLog(`➕ Adicionando vizinho: ${url}`, 'outgoing');
+  });
+
+  neighborUrlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addNeighborBtn.click();
+  });
+
+  clearLogBtn.addEventListener('click', () => {
+    logContainer.innerHTML = '';
+    addLog('Log limpo', 'info');
+  });
+
+  // Tabs
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById(`trade-${tab.dataset.tab}`).classList.add('active');
+    });
+  });
+
+  // Trade modal
+  tradeModalClose.addEventListener('click', hideTradeModal);
+  tradeCancelBtn.addEventListener('click', hideTradeModal);
+  tradeModal.querySelector('.modal-overlay').addEventListener('click', hideTradeModal);
+
+  tradeSubmitBtn.addEventListener('click', () => {
+    const targetPeer = tradeTargetPeer.value.trim().toUpperCase();
+    const offerSticker = tradeOfferSticker.value;
+    const offerQty = parseInt(tradeOfferQty.value) || 1;
+    const wantSticker = tradeWantSticker.value.trim().toUpperCase();
+    const wantQty = parseInt(tradeWantQty.value) || 1;
+
+    if (!targetPeer || !offerSticker || !wantSticker) {
+      addLog('❌ Preencha todos os campos da troca', 'error');
+      return;
+    }
+
+    send({
+      action: 'trade_propose',
+      target_peer_id: targetPeer,
+      offer_sticker_id: offerSticker,
+      offer_qty: offerQty,
+      want_sticker_id: wantSticker,
+      want_qty: wantQty,
+    });
+
+    hideTradeModal();
+  });
+
+  // Incoming trade modal
+  incomingAcceptBtn.addEventListener('click', () => {
+    if (currentIncomingTrade) {
+      send({ action: 'trade_accept', trade_id: currentIncomingTrade.trade_id });
+    }
+    hideIncomingTradeModal();
+  });
+
+  incomingRejectBtn.addEventListener('click', () => {
+    if (currentIncomingTrade) {
+      send({ action: 'trade_reject', trade_id: currentIncomingTrade.trade_id, reason: 'Recusada pelo usuário' });
+    }
+    hideIncomingTradeModal();
+  });
+
+  incomingTradeModal.querySelector('.modal-overlay').addEventListener('click', hideIncomingTradeModal);
+
+  // ===== PUBLIC API (for inline onclick handlers) =====
+  window.app = {
+    openTrade: (targetPeer, wantSticker) => {
+      showTradeModal(targetPeer, wantSticker);
+    },
+    acceptTrade: (tradeId) => {
+      send({ action: 'trade_accept', trade_id: tradeId });
+    },
+    rejectTrade: (tradeId) => {
+      send({ action: 'trade_reject', trade_id: tradeId, reason: 'Recusada pelo usuário' });
+    },
+  };
+
+  // ===== INIT =====
+  connect();
+})();

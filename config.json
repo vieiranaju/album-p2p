@@ -1,0 +1,8 @@
+{
+  "peer_id": "ALUNO-01",
+  "sticker_id": "FIG-01",
+  "port": 8080,
+  "default_ttl": 7,
+  "sticker_url": "",
+  "neighbors": []
+}
