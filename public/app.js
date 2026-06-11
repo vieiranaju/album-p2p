@@ -428,8 +428,14 @@
   });
 
   addNeighborBtn.addEventListener('click', () => {
-    const url = neighborUrlInput.value.trim();
+    let url = neighborUrlInput.value.trim();
     if (!url) return;
+    
+    // Adiciona o prefixo automaticamente se o usuário esquecer
+    if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
+      url = 'ws://' + url;
+    }
+    
     send({ action: 'add_neighbor', url });
     neighborUrlInput.value = '';
     addLog(`➕ Adicionando vizinho: ${url}`, 'outgoing');
