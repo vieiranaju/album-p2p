@@ -77,7 +77,7 @@ class NeighborManager extends EventEmitter {
       if (peer.ws === ws) {
         console.log(`[VIZINHOS] Desconectado: ${peerId}`);
         this.peers.delete(peerId);
-        this.emit('disconnected', peerId);
+        this.emit('disconnected', { peer_id: peerId, peers: this.getConnectedPeers() });
         break;
       }
     }
@@ -94,7 +94,7 @@ class NeighborManager extends EventEmitter {
 
     this.peers.set(peerId, { ws, url, direction });
     console.log(`[VIZINHOS] ✓ ${peerId} registrado (${direction})`);
-    this.emit('connected', peerId);
+    this.emit('connected', { peer_id: peerId, peers: this.getConnectedPeers() });
   }
 
   // Verifica se já há conexão aberta para uma URL ou peerId

@@ -42,7 +42,9 @@ class PeerEngine extends EventEmitter {
 
     // Verificar primeiro no próprio inventário
     if (this.inventory.has(stickerId)) {
-      this._addResult(queryId, { origin_peer_id: this.peerId, sticker_id: stickerId, query_id: queryId });
+      const quantity = this.inventory.getQuantity(stickerId);
+      this._addResult(queryId, { origin_peer_id: this.peerId, sticker_id: stickerId, query_id: queryId, quantity });
+      this.emit('search_hit', { origin_peer_id: this.peerId, sticker_id: stickerId, query_id: queryId, quantity });
     }
 
     // Enviar SEARCH para cada vizinho com receiver_peer_id preenchido (obrigatório na spec)
@@ -71,10 +73,11 @@ class PeerEngine extends EventEmitter {
 
     // Se temos a figurinha, responder com SEARCH_HIT pelo mesmo caminho que veio
     if (this.inventory.has(sticker_id)) {
-      const hit = buildSearchHit(this.peerId, this.peerId, origin_peer_id, query_id, sticker_id);
+      const quantity = this.inventory.getQuantity(sticker_id);
+      const hit = buildSearchHit(this.peerId, this.peerId, origin_peer_id, query_id, sticker_id, quantity);
       this.neighbors.sendToWs(sourceWs, hit);
-      console.log(`[BUSCA] ✓ HIT! Tenho ${sticker_id}`);
-      this.emit('search_hit_sent', { query_id, sticker_id });
+      console.log(`[BUSCA] ✓ HIT! Tenho ${quantity}x ${sticker_id}`);
+      this.emit('search_hit_sent', { query_id, sticker_id, quantity });
     }
 
     // Repassar para os outros vizinhos se ainda há TTL (exceto para quem nos enviou)
@@ -95,8 +98,10 @@ class PeerEngine extends EventEmitter {
 
     if (routeWs === null) {
       // Eu iniciei esta busca — armazenar resultado e notificar UI
-      this._addResult(query_id, { origin_peer_id, sticker_id, query_id });
-      this.emit('search_hit', { origin_peer_id, sticker_id, query_id });
+      // quantity vem do msg se for um peer remoto, ou foi definida localmente se eu mesmo tenho
+      const quantity = msg.quantity != null ? msg.quantity : this.inventory.getQuantity(sticker_id);
+      this._addResult(query_id, { origin_peer_id, sticker_id, query_id, quantity });
+      this.emit('search_hit', { origin_peer_id, sticker_id, query_id, quantity });
     } else if (routeWs) {
       // Não sou o originador — encaminhar HIT de volta pelo caminho reverso
       this.neighbors.sendToWs(routeWs, msg);

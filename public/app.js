@@ -140,7 +140,7 @@
         break;
 
       case 'search_hit':
-        addLog(`✓ HIT: ${msg.data.owner_peer_id} tem ${msg.data.quantity}x ${msg.data.sticker_id}`, 'incoming');
+        addLog(`✓ HIT: ${msg.data.origin_peer_id} tem ${msg.data.quantity}x ${msg.data.sticker_id}`, 'incoming');
         if (state.search_results[msg.data.query_id]) {
           state.search_results[msg.data.query_id].hits.push(msg.data);
         }
@@ -305,10 +305,10 @@
         for (const hit of data.hits) {
           html += `<div class="search-hit">
             <div class="search-hit-info">
-              <span class="search-hit-peer">${hit.owner_peer_id}</span>
+              <span class="search-hit-peer">${hit.origin_peer_id}</span>
               <span class="search-hit-qty">${hit.quantity}× disponíveis</span>
             </div>
-            <button class="btn btn-primary btn-sm" onclick="app.openTrade('${hit.owner_peer_id}', '${hit.sticker_id}')">
+            <button class="btn btn-primary btn-sm" onclick="app.openTrade('${hit.origin_peer_id}', '${hit.sticker_id}')">
               Trocar
             </button>
           </div>`;

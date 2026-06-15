@@ -92,7 +92,14 @@ function forwardEvent(emitter, event, uiType) {
 }
 
 // Inventário
-forwardEvent(inventory, 'updated', 'inventory_update');
+inventory.on('updated', (items) => {
+  notifyUi(JSON.stringify({
+    type: 'inventory_update',
+    data: items,
+    total_unique: inventory.getTotalUnique(),
+    total_count:  inventory.getTotalCount(),
+  }));
+});
 
 // Vizinhos
 forwardEvent(neighbors, 'connected',    'neighbor_connected');
@@ -169,7 +176,13 @@ function handleUiCommand(cmd, ws) {
       break;
 
     case 'trade_propose':
-      send('trade_proposed', trades.proposeTrade(cmd.target_peer_id, cmd.offer_sticker_id, cmd.want_sticker_id));
+      try {
+        trades.proposeTrade(cmd.target_peer_id, cmd.offer_sticker_id, cmd.want_sticker_id);
+        // O evento 'trade_proposed' é emitido internamente por proposeTrade()
+        // e encaminhado para a UI via forwardEvent — não é necessário send() aqui.
+      } catch (err) {
+        send('error', { message: err.message });
+      }
       break;
 
     case 'trade_accept':

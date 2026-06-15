@@ -45,7 +45,7 @@ function buildSearch(originPeerId, senderPeerId, receiverPeerId, stickerId, ttl,
 
 // SEARCH_HIT — resposta positiva: este nó possui a figurinha
 // Spec: documentacao/PROTOCOLO-SEARCH_HIT.md
-function buildSearchHit(originPeerId, senderPeerId, receiverPeerId, queryId, stickerId) {
+function buildSearchHit(originPeerId, senderPeerId, receiverPeerId, queryId, stickerId, quantity) {
   return {
     type:             MSG_TYPES.SEARCH_HIT,
     message_id:       uuidv4(),
@@ -54,6 +54,7 @@ function buildSearchHit(originPeerId, senderPeerId, receiverPeerId, queryId, sti
     receiver_peer_id: receiverPeerId, // nó que iniciou a busca
     query_id:         queryId,
     sticker_id:       stickerId,
+    quantity:         quantity,        // quantas cópias o nó possui
   };
 }
 
