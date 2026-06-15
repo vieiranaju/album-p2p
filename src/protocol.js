@@ -74,7 +74,7 @@ function buildSearchMiss(originPeerId, senderPeerId, receiverPeerId, queryId, st
 
 // TRADE_OFFER — propõe uma troca direta
 // Spec: documentacao/PROTOCOLO-TRADE_OFFER.md
-function buildTradeOffer(originPeerId, senderPeerId, receiverPeerId, offerStickerId, wantStickerId) {
+function buildTradeOffer(originPeerId, senderPeerId, receiverPeerId, offerStickerId, wantStickerId, offerQty, wantQty) {
   return {
     type:             MSG_TYPES.TRADE_OFFER,
     message_id:       uuidv4(),
@@ -83,6 +83,8 @@ function buildTradeOffer(originPeerId, senderPeerId, receiverPeerId, offerSticke
     receiver_peer_id: receiverPeerId,
     offer_sticker_id: offerStickerId, // figurinha que estou oferecendo
     want_sticker_id:  wantStickerId,  // figurinha que desejo receber
+    offer_qty:        offerQty || 1,  // quantidade oferecida
+    want_qty:         wantQty  || 1,  // quantidade desejada
   };
 }
 

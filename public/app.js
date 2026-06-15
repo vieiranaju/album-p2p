@@ -188,6 +188,18 @@
 
       case 'trade_confirmed':
         addLog(`✓ Transferência confirmada`, 'trade');
+        // Remove do pendente (peer aceitante ainda pode ter no pendente)
+        removePendingTrade(msg.data.trade_id);
+        // Atualiza status no histórico se já estiver lá (de ACCEPTED para CONFIRMED)
+        {
+          const idx = state.trade_history.findIndex(t => t.trade_id === msg.data.trade_id);
+          if (idx !== -1) {
+            state.trade_history[idx] = { ...state.trade_history[idx], status: 'CONFIRMED' };
+          } else {
+            state.trade_history.unshift(msg.data);
+          }
+        }
+        renderTrades();
         break;
 
       case 'log':

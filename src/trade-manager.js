@@ -37,12 +37,12 @@ class TradeManager extends EventEmitter {
   // ─── Ações do usuário ─────────────────────────────────────────────────────
 
   // Propor troca: ofereço minha figurinha, quero a figurinha do outro peer
-  proposeTrade(targetPeerId, offerStickerId, wantStickerId) {
-    if (!this.inventory.canTrade(offerStickerId)) {
+  proposeTrade(targetPeerId, offerStickerId, wantStickerId, offerQty = 1, wantQty = 1) {
+    if (!this.inventory.canTrade(offerStickerId, offerQty)) {
       throw new Error(`Sem ${offerStickerId} disponível para troca`);
     }
 
-    const msg = buildTradeOffer(this.peerId, this.peerId, targetPeerId, offerStickerId, wantStickerId);
+    const msg = buildTradeOffer(this.peerId, this.peerId, targetPeerId, offerStickerId, wantStickerId, offerQty, wantQty);
 
     // Armazenar localmente usando o message_id como identificador da troca
     const trade = {
@@ -50,7 +50,9 @@ class TradeManager extends EventEmitter {
       initiator:        this.peerId,
       target:           targetPeerId,
       offer_sticker_id: offerStickerId,
+      offer_qty:        offerQty,
       want_sticker_id:  wantStickerId,
+      want_qty:         wantQty,
       status:           STATUS.PENDING,
       direction:        'outgoing',
     };
@@ -58,7 +60,7 @@ class TradeManager extends EventEmitter {
     this.trades.set(trade.trade_id, trade);
     this.neighborManager.sendTo(targetPeerId, msg);
 
-    console.log(`[TROCA] Proposta enviada → ${targetPeerId}: ofereço ${offerStickerId}, quero ${wantStickerId}`);
+    console.log(`[TROCA] Proposta enviada → ${targetPeerId}: ofereço ${offerQty}x${offerStickerId}, quero ${wantQty}x${wantStickerId}`);
     this.emit('trade_proposed', trade);
     return trade;
   }
@@ -67,14 +69,14 @@ class TradeManager extends EventEmitter {
   acceptTrade(tradeId) {
     const trade = this._getTrade(tradeId);
 
-    if (!this.inventory.canTrade(trade.want_sticker_id)) {
+    if (!this.inventory.canTrade(trade.want_sticker_id, trade.want_qty)) {
       this.rejectTrade(tradeId, 'Inventário insuficiente');
       throw new Error(`Sem ${trade.want_sticker_id} disponível`);
     }
 
     // Atualizar inventário: entrego o que o outro quer, recebo o que ele ofereceu
-    this.inventory.remove(trade.want_sticker_id);
-    this.inventory.add(trade.offer_sticker_id);
+    this.inventory.remove(trade.want_sticker_id, trade.want_qty);
+    this.inventory.add(trade.offer_sticker_id, trade.offer_qty);
     trade.status = STATUS.ACCEPTED;
 
     // Na resposta, offer/want são do ponto de vista do ACEITANTE (invertidos)
@@ -119,13 +121,15 @@ class TradeManager extends EventEmitter {
       initiator:        msg.origin_peer_id,
       target:           this.peerId,
       offer_sticker_id: msg.offer_sticker_id,
+      offer_qty:        msg.offer_qty || 1,
       want_sticker_id:  msg.want_sticker_id,
+      want_qty:         msg.want_qty  || 1,
       status:           STATUS.PENDING,
       direction:        'incoming',
     };
 
     this.trades.set(trade.trade_id, trade);
-    console.log(`[TROCA] Proposta recebida ← ${msg.origin_peer_id}: oferece ${msg.offer_sticker_id}, quer ${msg.want_sticker_id}`);
+    console.log(`[TROCA] Proposta recebida ← ${msg.origin_peer_id}: oferece ${trade.offer_qty}x${msg.offer_sticker_id}, quer ${trade.want_qty}x${msg.want_sticker_id}`);
     this.emit('trade_received', trade);
     return trade;
   }
@@ -138,8 +142,8 @@ class TradeManager extends EventEmitter {
     if (!trade) return console.warn(`[TROCA] ACCEPT sem proposta correspondente de ${msg.origin_peer_id}`);
 
     // Atualizar inventário: entrego o que ofereci, recebo o que queria
-    this.inventory.remove(trade.offer_sticker_id);
-    this.inventory.add(trade.want_sticker_id);
+    this.inventory.remove(trade.offer_sticker_id, trade.offer_qty);
+    this.inventory.add(trade.want_sticker_id, trade.want_qty);
 
     // Confirmar que nossa parte está concluída
     const msg2 = buildTransferConfirm(
@@ -170,10 +174,13 @@ class TradeManager extends EventEmitter {
 
   // O ofertante confirmou que concluiu — troca finalizada para o aceitante
   handleTransferConfirm(msg) {
-    const trade = this._findPending(msg.offer_sticker_id, msg.want_sticker_id, msg.origin_peer_id);
+    // Busca a troca pelo par de figurinhas e pelo peer envolvido.
+    // A troca do aceitante já está com status ACCEPTED (não PENDING), então usamos _findByCounterpart.
+    const trade = this._findByCounterpart(msg.origin_peer_id);
     if (!trade) return console.warn(`[TROCA] CONFIRM sem proposta correspondente de ${msg.origin_peer_id}`);
 
     trade.status = STATUS.CONFIRMED;
+    this._saveHistory(trade);
     console.log(`[TROCA] ✓ Confirmação recebida de ${msg.origin_peer_id}`);
     this.emit('trade_confirmed', trade);
     return trade;
@@ -204,10 +211,27 @@ class TradeManager extends EventEmitter {
     return null;
   }
 
+  // Busca uma troca ACCEPTED pelo peer contraparte (usado pelo aceitante ao receber TRANSFER_CONFIRM)
+  _findByCounterpart(counterpartPeerId) {
+    for (const trade of this.trades.values()) {
+      if (
+        trade.status === STATUS.ACCEPTED &&
+        (trade.initiator === counterpartPeerId || trade.target === counterpartPeerId)
+      ) {
+        return trade;
+      }
+    }
+    return null;
+  }
+
   _saveHistory(trade) {
-    this.tradeHistory.push({ ...trade, completed_at: Date.now() });
-    if (this.tradeHistory.length > 100) {
-      this.tradeHistory = this.tradeHistory.slice(-100);
+    // Evitar duplicatas no histórico
+    const exists = this.tradeHistory.some(h => h.trade_id === trade.trade_id);
+    if (!exists) {
+      this.tradeHistory.push({ ...trade, completed_at: Date.now() });
+      if (this.tradeHistory.length > 100) {
+        this.tradeHistory = this.tradeHistory.slice(-100);
+      }
     }
   }
 

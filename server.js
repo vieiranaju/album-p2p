@@ -177,7 +177,13 @@ function handleUiCommand(cmd, ws) {
 
     case 'trade_propose':
       try {
-        trades.proposeTrade(cmd.target_peer_id, cmd.offer_sticker_id, cmd.want_sticker_id);
+        trades.proposeTrade(
+          cmd.target_peer_id,
+          cmd.offer_sticker_id,
+          cmd.want_sticker_id,
+          cmd.offer_qty || 1,
+          cmd.want_qty  || 1,
+        );
         // O evento 'trade_proposed' é emitido internamente por proposeTrade()
         // e encaminhado para a UI via forwardEvent — não é necessário send() aqui.
       } catch (err) {
