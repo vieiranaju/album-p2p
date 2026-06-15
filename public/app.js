@@ -147,6 +147,15 @@
         renderSearchResults();
         break;
 
+      case 'search_no_results':
+        addLog(`⚠️ Nenhum peer encontrou "${msg.data.sticker_id}" na rede`, 'error');
+        // Marcar a query como sem resultados para atualizar a UI
+        if (state.search_results[msg.data.query_id]) {
+          state.search_results[msg.data.query_id].no_results = true;
+        }
+        renderSearchResults();
+        break;
+
       case 'search_hit_sent':
         addLog(`📤 HIT enviado: ${msg.data.quantity}x ${msg.data.sticker_id}`, 'outgoing');
         break;
@@ -300,7 +309,11 @@
           🔍 ${data.sticker_id} <span style="opacity:0.5">(${queryId.substring(0, 8)}...)</span>
         </div>`;
       if (data.hits.length === 0) {
-        html += '<div class="empty-state" style="padding:6px">Aguardando resultados...</div>';
+        if (data.no_results) {
+          html += '<div class="empty-state" style="padding:6px;color:var(--danger)">&#x26A0;&#xFE0F; Nenhum peer na rede possui essa figurinha</div>';
+        } else {
+          html += '<div class="empty-state" style="padding:6px">Aguardando resultados...</div>';
+        }
       } else {
         for (const hit of data.hits) {
           html += `<div class="search-hit">
@@ -472,12 +485,12 @@
     }
 
     send({
-      action: 'trade_propose',
-      target_peer_id: targetPeer,
+      action:           'trade_propose',
+      target_peer_id:   targetPeer,
       offer_sticker_id: offerSticker,
-      offer_qty: offerQty,
-      want_sticker_id: wantSticker,
-      want_qty: wantQty,
+      offer_qty:        offerQty,
+      want_sticker_id:  wantSticker,
+      want_qty:         wantQty,
     });
 
     hideTradeModal();

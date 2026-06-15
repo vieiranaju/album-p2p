@@ -37,12 +37,12 @@ class TradeManager extends EventEmitter {
   // ─── Ações do usuário ─────────────────────────────────────────────────────
 
   // Propor troca: ofereço minha figurinha, quero a figurinha do outro peer
-  proposeTrade(targetPeerId, offerStickerId, wantStickerId) {
-    if (!this.inventory.canTrade(offerStickerId)) {
+  proposeTrade(targetPeerId, offerStickerId, wantStickerId, offerQty = 1, wantQty = 1) {
+    if (!this.inventory.canTrade(offerStickerId, offerQty)) {
       throw new Error(`Sem ${offerStickerId} disponível para troca`);
     }
 
-    const msg = buildTradeOffer(this.peerId, this.peerId, targetPeerId, offerStickerId, wantStickerId);
+    const msg = buildTradeOffer(this.peerId, this.peerId, targetPeerId, offerStickerId, wantStickerId, offerQty, wantQty);
 
     // Armazenar localmente usando o message_id como identificador da troca
     const trade = {
@@ -50,15 +50,21 @@ class TradeManager extends EventEmitter {
       initiator:        this.peerId,
       target:           targetPeerId,
       offer_sticker_id: offerStickerId,
+      offer_qty:        offerQty,
       want_sticker_id:  wantStickerId,
+      want_qty:         wantQty,
       status:           STATUS.PENDING,
       direction:        'outgoing',
     };
 
     this.trades.set(trade.trade_id, trade);
-    this.neighborManager.sendTo(targetPeerId, msg);
+    const sent = this.neighborManager.sendTo(targetPeerId, msg);
+    if (!sent) {
+      this.trades.delete(trade.trade_id);
+      throw new Error(`Peer "${targetPeerId}" não está conectado. Verifique se ele está online e conectado à rede.`);
+    }
 
-    console.log(`[TROCA] Proposta enviada → ${targetPeerId}: ofereço ${offerStickerId}, quero ${wantStickerId}`);
+    console.log(`[TROCA] Proposta enviada → ${targetPeerId}: ofereço ${offerQty}x ${offerStickerId}, quero ${wantQty}x ${wantStickerId}`);
     this.emit('trade_proposed', trade);
     return trade;
   }
@@ -119,13 +125,15 @@ class TradeManager extends EventEmitter {
       initiator:        msg.origin_peer_id,
       target:           this.peerId,
       offer_sticker_id: msg.offer_sticker_id,
+      offer_qty:        msg.offer_qty || 1,
       want_sticker_id:  msg.want_sticker_id,
+      want_qty:         msg.want_qty  || 1,
       status:           STATUS.PENDING,
       direction:        'incoming',
     };
 
     this.trades.set(trade.trade_id, trade);
-    console.log(`[TROCA] Proposta recebida ← ${msg.origin_peer_id}: oferece ${msg.offer_sticker_id}, quer ${msg.want_sticker_id}`);
+    console.log(`[TROCA] Proposta recebida ← ${msg.origin_peer_id}: oferece ${trade.offer_qty}x ${msg.offer_sticker_id}, quer ${trade.want_qty}x ${msg.want_sticker_id}`);
     this.emit('trade_received', trade);
     return trade;
   }

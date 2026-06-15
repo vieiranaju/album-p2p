@@ -1,8 +1,11 @@
 {
-  "peer_id": "ALUNO-01",
-  "sticker_id": "FIG-01",
+  "peer_id": "ALUNO-07",
+  "sticker_id": "FIG-07",
   "port": 8080,
   "default_ttl": 7,
   "sticker_url": "",
-  "neighbors": []
+  "neighbors": [
+    "ws://26.82.214.156:8080/ws/peer",
+    "ws://26.76.104.30:8080/ws/peer"
+  ]
 }

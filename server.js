@@ -99,9 +99,10 @@ forwardEvent(neighbors, 'connected',    'neighbor_connected');
 forwardEvent(neighbors, 'disconnected', 'neighbor_disconnected');
 
 // Busca
-forwardEvent(peerEngine, 'search_started',  'search_started');
-forwardEvent(peerEngine, 'search_hit',      'search_hit');
-forwardEvent(peerEngine, 'search_hit_sent', 'search_hit_sent');
+forwardEvent(peerEngine, 'search_started',    'search_started');
+forwardEvent(peerEngine, 'search_hit',         'search_hit');
+forwardEvent(peerEngine, 'search_hit_sent',    'search_hit_sent');
+forwardEvent(peerEngine, 'search_no_results',  'search_no_results');
 
 // Trocas
 forwardEvent(trades, 'trade_received',  'trade_received');
@@ -169,7 +170,20 @@ function handleUiCommand(cmd, ws) {
       break;
 
     case 'trade_propose':
-      send('trade_proposed', trades.proposeTrade(cmd.target_peer_id, cmd.offer_sticker_id, cmd.want_sticker_id));
+      try {
+        const trade = trades.proposeTrade(
+          cmd.target_peer_id,
+          cmd.offer_sticker_id,
+          cmd.want_sticker_id,
+          cmd.offer_qty  || 1,
+          cmd.want_qty   || 1,
+        );
+        // O evento 'trade_proposed' já é repassado via forwardEvent
+        // mas também confirmamos direto ao browser que originou o comando
+        send('trade_propose_ok', { trade_id: trade.trade_id });
+      } catch (err) {
+        send('error', { message: err.message });
+      }
       break;
 
     case 'trade_accept':

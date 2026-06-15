@@ -42,13 +42,23 @@ class PeerEngine extends EventEmitter {
 
     // Verificar primeiro no próprio inventário
     if (this.inventory.has(stickerId)) {
-      this._addResult(queryId, { origin_peer_id: this.peerId, sticker_id: stickerId, query_id: queryId });
+      const qty = this.inventory.getQuantity(stickerId);
+      this._addResult(queryId, { owner_peer_id: this.peerId, sticker_id: stickerId, query_id: queryId, quantity: qty });
     }
 
     // Enviar SEARCH para cada vizinho com receiver_peer_id preenchido (obrigatório na spec)
     for (const { peer_id } of this.neighbors.getConnectedPeers()) {
       this.neighbors.sendTo(peer_id, buildSearch(this.peerId, this.peerId, peer_id, stickerId, this.ttl, queryId));
     }
+
+    // Timeout: se nenhum resultado aparecer em 8s, notificar a UI
+    setTimeout(() => {
+      const results = this.searchResults.get(queryId);
+      if (results && results.length === 0) {
+        console.log(`[BUSCA] Timeout sem resultados: ${stickerId} (${queryId.slice(0, 8)}...)`);
+        this.emit('search_no_results', { query_id: queryId, sticker_id: stickerId });
+      }
+    }, 8000);
 
     console.log(`[BUSCA] Iniciada: ${stickerId} (query: ${queryId.slice(0, 8)}...)`);
     this.emit('search_started', { query_id: queryId, sticker_id: stickerId });
@@ -71,10 +81,11 @@ class PeerEngine extends EventEmitter {
 
     // Se temos a figurinha, responder com SEARCH_HIT pelo mesmo caminho que veio
     if (this.inventory.has(sticker_id)) {
-      const hit = buildSearchHit(this.peerId, this.peerId, origin_peer_id, query_id, sticker_id);
+      const qty = this.inventory.getQuantity(sticker_id);
+      const hit = buildSearchHit(this.peerId, this.peerId, origin_peer_id, query_id, sticker_id, qty);
       this.neighbors.sendToWs(sourceWs, hit);
-      console.log(`[BUSCA] ✓ HIT! Tenho ${sticker_id}`);
-      this.emit('search_hit_sent', { query_id, sticker_id });
+      console.log(`[BUSCA] ✓ HIT! Tenho ${sticker_id} (${qty}x)`);
+      this.emit('search_hit_sent', { query_id, sticker_id, quantity: qty });
     }
 
     // Repassar para os outros vizinhos se ainda há TTL (exceto para quem nos enviou)
@@ -89,14 +100,15 @@ class PeerEngine extends EventEmitter {
 
   // Processar SEARCH_HIT recebido
   handleSearchHit(msg, sourceWs) {
-    const { query_id, sticker_id, origin_peer_id } = msg;
+    const { query_id, sticker_id, origin_peer_id, quantity } = msg;
 
     const routeWs = this.queryRoutes.get(query_id);
 
     if (routeWs === null) {
       // Eu iniciei esta busca — armazenar resultado e notificar UI
-      this._addResult(query_id, { origin_peer_id, sticker_id, query_id });
-      this.emit('search_hit', { origin_peer_id, sticker_id, query_id });
+      const result = { owner_peer_id: origin_peer_id, sticker_id, query_id, quantity: quantity || 0 };
+      this._addResult(query_id, result);
+      this.emit('search_hit', result);
     } else if (routeWs) {
       // Não sou o originador — encaminhar HIT de volta pelo caminho reverso
       this.neighbors.sendToWs(routeWs, msg);
