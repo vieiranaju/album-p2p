@@ -1,4 +1,10 @@
 // neighbor-manager.js — Gerencia conexões WebSocket com outros peers da rede
+//
+// Descoberta automática de vizinhos:
+//   - Ao conectar a um peer, enviamos HELLO com a lista dos nossos URLs conhecidos
+//   - Ao receber HELLO com campo `peers`, tentamos conectar nos novos endereços
+//   - Isso permite alcançar "vizinhos dos vizinhos" automaticamente
+//
 const WebSocket = require('ws');
 const EventEmitter = require('events');
 const { buildHello } = require('./protocol');
@@ -9,15 +15,21 @@ class NeighborManager extends EventEmitter {
   constructor(config) {
     super();
     this.peerId = config.peer_id;
+    this.port   = config.port || 8080;
 
     // Map<peerId, { ws, url, direction }>
     // Guarda a conexão WebSocket de cada vizinho conhecido
     this.peers = new Map();
+
+    // Set<url> — todos os URLs que já tentamos ou estamos conectados
+    // Evita tentativas duplicadas ao receber peers via HELLO
+    this.knownUrls = new Set();
   }
 
   // Conectar a todos os vizinhos listados no config
   connectToAll(urls) {
     for (const url of urls) {
+      this.knownUrls.add(url);
       this._connect(url);
     }
   }
@@ -27,7 +39,14 @@ class NeighborManager extends EventEmitter {
     if (this._isOpen(url)) return;
 
     console.log(`[VIZINHOS] Conectando a ${url}...`);
-    const ws = new WebSocket(url);
+    let ws;
+    try {
+      ws = new WebSocket(url);
+    } catch (err) {
+      console.error(`[VIZINHOS] URL inválida, ignorando: ${url} (${err.message})`);
+      this.knownUrls.delete(url);
+      return;
+    }
 
     ws.on('open',    ()    => this._onOpen(ws, url));
     ws.on('message', (raw) => this._onMessage(ws, raw, url, 'outbound'));
@@ -46,7 +65,9 @@ class NeighborManager extends EventEmitter {
 
   _onOpen(ws, url) {
     console.log(`[VIZINHOS] Conectado a ${url}`);
-    ws.send(JSON.stringify(buildHello(this.peerId)));
+    // Enviar HELLO com nossa lista de URLs conhecidos para que o vizinho
+    // possa se conectar a outros peers que já conhecemos
+    ws.send(JSON.stringify(buildHello(this.peerId, this._getKnownUrls())));
   }
 
   _onMessage(ws, raw, url, direction) {
@@ -62,9 +83,14 @@ class NeighborManager extends EventEmitter {
     if (msg.type === 'HELLO' && msg.sender_peer_id) {
       this._register(msg.sender_peer_id, ws, url, direction);
 
-      // Conexões de entrada exigem que respondamos com HELLO
+      // Conexões de entrada exigem que respondamos com HELLO (incluindo nossa lista de peers)
       if (direction === 'inbound') {
-        ws.send(JSON.stringify(buildHello(this.peerId)));
+        ws.send(JSON.stringify(buildHello(this.peerId, this._getKnownUrls())));
+      }
+
+      // Descoberta: tentar conectar aos peers que o vizinho nos informou
+      if (Array.isArray(msg.peers) && msg.peers.length > 0) {
+        this._discoverPeers(msg.peers);
       }
     }
 
@@ -108,12 +134,87 @@ class NeighborManager extends EventEmitter {
     this.emit('connected', { peer_id: peerId, peers: this.getConnectedPeers() });
   }
 
+  // Processar lista de peers recebida via HELLO e conectar nos novos
+  _discoverPeers(peerUrls) {
+    for (const rawUrl of peerUrls) {
+      const url = this._normalizeUrl(rawUrl);
+      if (!url) continue;
+      if (this.knownUrls.has(url)) continue; // já conhecemos
+
+      console.log(`[VIZINHOS] 🔍 Descoberto via HELLO: ${url}`);
+      this.knownUrls.add(url);
+      this._connect(url);
+    }
+  }
+
+  // Normalizar URL: aceita tanto "192.168.1.10" quanto "ws://192.168.1.10:8080/ws/peer"
+  // Também trata objetos que alguns grupos podem enviar no campo peers
+  _normalizeUrl(raw) {
+    if (!raw) return null;
+
+    // Se veio um objeto, tentar extrair o endereço
+    if (typeof raw === 'object') {
+      raw = raw.url || raw.address || raw.host || raw.ip || null;
+      if (!raw || typeof raw !== 'string') return null;
+    }
+
+    if (typeof raw !== 'string') return null;
+    raw = raw.trim();
+    if (!raw) return null;
+
+    // Rejeitar entradas obviamente inválidas
+    if (raw.includes('[object') || raw.includes('undefined') || raw.includes('null')) return null;
+    // Rejeitar placeholders como "172.16.3.xx" ou "172.16.3.XX"
+    if (/[xX]{2,}/.test(raw)) return null;
+    // Rejeitar peer_ids no formato ALUNO-XX (não são endereços)
+    if (/^ALUNO-/i.test(raw)) return null;
+
+    // Já é URL WebSocket completa — ainda verificar se o host é válido
+    if (raw.startsWith('ws://') || raw.startsWith('wss://')) {
+      // Rejeitar hosts inválidos mesmo em URLs completas
+      if (/\/\/ALUNO-/i.test(raw)) return null;
+      if (/[xX]{2,}/.test(raw)) return null;
+      return raw;
+    }
+
+    // Host puro (ex: "192.168.1.10") — montar URL padrão
+    // Validar que parece um IP ou hostname válido
+    if (/^[\d.]+$/.test(raw) || /^[a-zA-Z0-9.-]+\.[a-zA-Z0-9]+$/.test(raw)) {
+      return `ws://${raw}:${this.port}/ws/peer`;
+    }
+
+    return null;
+  }
+
+
+  // Retorna a lista de URLs conhecidos para incluir no HELLO
+  // Inclui apenas URLs de conexões ativas (outbound com URL conhecida)
+  _getKnownUrls() {
+    const urls = new Set();
+    for (const peer of this.peers.values()) {
+      if (peer.url && peer.ws.readyState === WebSocket.OPEN) {
+        urls.add(peer.url);
+      }
+    }
+    // Incluir também os URLs configurados manualmente que conhecemos
+    for (const url of this.knownUrls) {
+      urls.add(url);
+    }
+    return [...urls];
+  }
+
   // Verifica se já há conexão aberta para uma URL ou peerId
   _isOpen(url, peerId) {
     for (const [id, peer] of this.peers) {
       const open = peer.ws.readyState === WebSocket.OPEN;
       if (peerId && id === peerId && open) return true;
       if (url && peer.url === url && open) return true;
+    }
+    // Também verificar se a URL está em processo de conexão
+    if (url && this.knownUrls.has(url)) {
+      for (const peer of this.peers.values()) {
+        if (peer.url === url) return true; // existe entrada (mesmo que ainda conectando)
+      }
     }
     return false;
   }
@@ -142,6 +243,7 @@ class NeighborManager extends EventEmitter {
 
   // Adicionar vizinho em tempo de execução (via UI ou API)
   addNeighbor(url) {
+    this.knownUrls.add(url);
     this._connect(url);
   }
 
