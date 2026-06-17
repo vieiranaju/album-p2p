@@ -24,12 +24,16 @@ class NeighborManager extends EventEmitter {
     // Set<url> — todos os URLs que já tentamos ou estamos conectados
     // Evita tentativas duplicadas ao receber peers via HELLO
     this.knownUrls = new Set();
+
+    // WeakSet<WebSocket> — sockets para os quais já enviamos nosso HELLO de volta
+    // Impede loop infinito com peers que respondem HELLO a cada HELLO recebido
+    this._greetedSockets = new WeakSet();
   }
 
   // Conectar a todos os vizinhos listados no config
   connectToAll(urls) {
     for (const url of urls) {
-      this.knownUrls.add(url);
+      this.knownUrls.add(this._canonical(url));
       this._connect(url);
     }
   }
@@ -83,8 +87,11 @@ class NeighborManager extends EventEmitter {
     if (msg.type === 'HELLO' && msg.sender_peer_id) {
       this._register(msg.sender_peer_id, ws, url, direction);
 
-      // Conexões de entrada exigem que respondamos com HELLO (incluindo nossa lista de peers)
-      if (direction === 'inbound') {
+      // Conexões de entrada exigem que respondamos com HELLO uma única vez.
+      // Usamos _greetedSockets para evitar loop infinito com peers que respondem
+      // HELLO a cada HELLO recebido.
+      if (direction === 'inbound' && !this._greetedSockets.has(ws)) {
+        this._greetedSockets.add(ws);
         ws.send(JSON.stringify(buildHello(this.peerId, this._getKnownUrls())));
       }
 
@@ -123,12 +130,8 @@ class NeighborManager extends EventEmitter {
       // Novo peer: registrar no Map
       this.peers.set(peerId, { ws, url, direction });
       console.log(`[VIZINHOS] ✓ ${peerId} registrado (${direction})`);
-    } else {
-      // Peer já registrado (ex: conexão simultânea outbound+inbound):
-      // não substituímos a entrada, mas sempre emitimos 'connected'
-      // para garantir que a UI fique atualizada
-      console.log(`[VIZINHOS] ↺ ${peerId} HELLO duplicado (${direction}), atualizando UI`);
     }
+    // (HELLO duplicado — não logar para não poluir o console)
 
     // Sempre emitir 'connected' para manter a UI sincronizada
     this.emit('connected', { peer_id: peerId, peers: this.getConnectedPeers() });
@@ -139,12 +142,18 @@ class NeighborManager extends EventEmitter {
     for (const rawUrl of peerUrls) {
       const url = this._normalizeUrl(rawUrl);
       if (!url) continue;
-      if (this.knownUrls.has(url)) continue; // já conhecemos
+      const canonical = this._canonical(url);
+      if (this.knownUrls.has(canonical)) continue; // já conhecemos
 
       console.log(`[VIZINHOS] 🔍 Descoberto via HELLO: ${url}`);
-      this.knownUrls.add(url);
+      this.knownUrls.add(canonical);
       this._connect(url);
     }
+  }
+
+  // Retorna a forma canônica de uma URL (sem barra final, minúsculas no host)
+  _canonical(url) {
+    return url.replace(/\/+$/, ''); // remove trailing slashes
   }
 
   // Normalizar URL: aceita tanto "192.168.1.10" quanto "ws://192.168.1.10:8080/ws/peer"
@@ -205,15 +214,16 @@ class NeighborManager extends EventEmitter {
 
   // Verifica se já há conexão aberta para uma URL ou peerId
   _isOpen(url, peerId) {
+    const canonicalUrl = url ? this._canonical(url) : null;
     for (const [id, peer] of this.peers) {
       const open = peer.ws.readyState === WebSocket.OPEN;
       if (peerId && id === peerId && open) return true;
-      if (url && peer.url === url && open) return true;
+      if (canonicalUrl && peer.url && this._canonical(peer.url) === canonicalUrl && open) return true;
     }
     // Também verificar se a URL está em processo de conexão
-    if (url && this.knownUrls.has(url)) {
+    if (canonicalUrl && this.knownUrls.has(canonicalUrl)) {
       for (const peer of this.peers.values()) {
-        if (peer.url === url) return true; // existe entrada (mesmo que ainda conectando)
+        if (peer.url && this._canonical(peer.url) === canonicalUrl) return true;
       }
     }
     return false;
@@ -243,7 +253,7 @@ class NeighborManager extends EventEmitter {
 
   // Adicionar vizinho em tempo de execução (via UI ou API)
   addNeighbor(url) {
-    this.knownUrls.add(url);
+    this.knownUrls.add(this._canonical(url));
     this._connect(url);
   }
 

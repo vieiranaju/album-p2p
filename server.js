@@ -168,8 +168,13 @@ function handleUiCommand(cmd, ws) {
 
   switch (cmd.action) {
     case 'search': {
+      if (!cmd.sticker_id) { send('error', { message: 'sticker_id obrigatório' }); break; }
       const queryId = peerEngine.search(cmd.sticker_id);
-      send('search_initiated', { query_id: queryId, sticker_id: cmd.sticker_id });
+      if (queryId === null) {
+        send('error', { message: `Aguarde antes de buscar ${cmd.sticker_id} novamente` });
+      } else {
+        send('search_initiated', { query_id: queryId, sticker_id: cmd.sticker_id });
+      }
       break;
     }
 

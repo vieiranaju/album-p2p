@@ -359,10 +359,11 @@
         }
       } else {
         for (const hit of data.hits) {
+          const qtyLabel = hit.quantity > 1 ? `${hit.quantity}× disponíveis` : 'disponível';
           html += `<div class="search-hit">
             <div class="search-hit-info">
               <span class="search-hit-peer">${hit.origin_peer_id}</span>
-              <span class="search-hit-qty">${hit.quantity}× disponíveis</span>
+              <span class="search-hit-qty">${qtyLabel}</span>
             </div>
             <button class="btn btn-primary btn-sm" onclick="app.openTrade('${hit.origin_peer_id}', '${hit.sticker_id}')">
               Trocar
