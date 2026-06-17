@@ -90,10 +90,21 @@ class NeighborManager extends EventEmitter {
 
   _register(peerId, ws, url, direction) {
     if (peerId === this.peerId) return; // Não registrar a si mesmo
-    if (this._isOpen(null, peerId)) return; // Já conectado a este peer
 
-    this.peers.set(peerId, { ws, url, direction });
-    console.log(`[VIZINHOS] ✓ ${peerId} registrado (${direction})`);
+    const alreadyRegistered = this._isOpen(null, peerId);
+
+    if (!alreadyRegistered) {
+      // Novo peer: registrar no Map
+      this.peers.set(peerId, { ws, url, direction });
+      console.log(`[VIZINHOS] ✓ ${peerId} registrado (${direction})`);
+    } else {
+      // Peer já registrado (ex: conexão simultânea outbound+inbound):
+      // não substituímos a entrada, mas sempre emitimos 'connected'
+      // para garantir que a UI fique atualizada
+      console.log(`[VIZINHOS] ↺ ${peerId} HELLO duplicado (${direction}), atualizando UI`);
+    }
+
+    // Sempre emitir 'connected' para manter a UI sincronizada
     this.emit('connected', { peer_id: peerId, peers: this.getConnectedPeers() });
   }
 

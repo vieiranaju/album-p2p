@@ -199,6 +199,37 @@ body {
 .search-hit-peer { font-weight: 600; font-size: 0.85rem; }
 .search-hit-qty { font-size: 0.75rem; color: var(--success); }
 
+/* Search status badges */
+.search-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.search-status.searching {
+  background: rgba(253, 203, 110, 0.12);
+  color: var(--warning);
+  border: 1px solid rgba(253, 203, 110, 0.25);
+  animation: pulse-opacity 1.4s ease-in-out infinite;
+}
+.search-status.retrying {
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(255, 107, 107, 0.25);
+  animation: pulse-opacity 1s ease-in-out infinite;
+}
+.search-status.timeout {
+  background: rgba(100, 100, 120, 0.15);
+  color: var(--text-muted);
+  border: 1px solid rgba(100, 100, 120, 0.2);
+}
+@keyframes pulse-opacity { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+
 /* ===== TRADES ===== */
 .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
 .tab {

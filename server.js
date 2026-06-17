@@ -109,6 +109,8 @@ forwardEvent(neighbors, 'disconnected', 'neighbor_disconnected');
 forwardEvent(peerEngine, 'search_started',  'search_started');
 forwardEvent(peerEngine, 'search_hit',      'search_hit');
 forwardEvent(peerEngine, 'search_hit_sent', 'search_hit_sent');
+forwardEvent(peerEngine, 'search_retry',    'search_retry');
+forwardEvent(peerEngine, 'search_timeout',  'search_timeout');
 
 // Trocas
 forwardEvent(trades, 'trade_received',  'trade_received');

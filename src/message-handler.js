@@ -22,7 +22,11 @@ class MessageHandler {
     switch (msg.type) {
       case MSG_TYPES.HELLO:
         // HELLO já é tratado pelo NeighborManager; aqui apenas notificamos a UI
-        this.notifyUi(JSON.stringify({ type: 'neighbor_update' }));
+        // com o sender_peer_id para que ela possa atualizar a lista de vizinhos
+        this.notifyUi(JSON.stringify({
+          type: 'neighbor_update',
+          data: { peer_id: msg.sender_peer_id },
+        }));
         break;
 
       case MSG_TYPES.SEARCH:

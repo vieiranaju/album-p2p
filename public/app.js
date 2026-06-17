@@ -132,8 +132,9 @@
       case 'search_initiated':
         addLog(`🔍 Busca iniciada: ${msg.data.sticker_id} (${msg.data.query_id.substring(0, 8)}...)`, 'outgoing');
         if (!state.search_results[msg.data.query_id]) {
-          state.search_results[msg.data.query_id] = { sticker_id: msg.data.sticker_id, hits: [] };
+          state.search_results[msg.data.query_id] = { sticker_id: msg.data.sticker_id, hits: [], status: 'searching', attempt: 1 };
         }
+        renderSearchResults();
         break;
 
       case 'search_started':
@@ -143,6 +144,25 @@
         addLog(`✓ HIT: ${msg.data.origin_peer_id} tem ${msg.data.quantity}x ${msg.data.sticker_id}`, 'incoming');
         if (state.search_results[msg.data.query_id]) {
           state.search_results[msg.data.query_id].hits.push(msg.data);
+          // Limpar status de retry ao receber resultado
+          state.search_results[msg.data.query_id].status = 'found';
+        }
+        renderSearchResults();
+        break;
+
+      case 'search_retry':
+        addLog(`🔄 Sem resposta. Repetindo busca (tentativa ${msg.data.attempt}/3): ${msg.data.sticker_id}`, 'info');
+        if (state.search_results[msg.data.query_id]) {
+          state.search_results[msg.data.query_id].status = 'retrying';
+          state.search_results[msg.data.query_id].attempt = msg.data.attempt;
+        }
+        renderSearchResults();
+        break;
+
+      case 'search_timeout':
+        addLog(`⏱ Busca cancelada após 3 tentativas sem resposta: ${msg.data.sticker_id}`, 'error');
+        if (state.search_results[msg.data.query_id]) {
+          state.search_results[msg.data.query_id].status = 'timeout';
         }
         renderSearchResults();
         break;
@@ -205,8 +225,14 @@
       case 'log':
         if (msg.message && msg.message.type) {
           const dir = msg.direction === 'incoming' ? '⬇️' : '⬆️';
-          addLog(`${dir} ${msg.message.type} de ${msg.message.peer_id || '?'}`, msg.direction);
+          const sender = msg.message.sender_peer_id || msg.message.origin_peer_id || '?';
+          addLog(`${dir} ${msg.message.type} de ${sender}`, msg.direction);
         }
+        break;
+
+      case 'neighbor_update':
+        // Recarregar lista de vizinhos via get_status ao receber qualquer HELLO
+        send({ action: 'get_status' });
         break;
 
       case 'error':
@@ -307,12 +333,30 @@
     // Show most recent first
     for (let i = queries.length - 1; i >= 0; i--) {
       const [queryId, data] = queries[i];
+      const status = data.status || 'searching';
+
+      // Status badge
+      let statusBadge = '';
+      if (status === 'searching') {
+        statusBadge = `<span class="search-status searching">⏳ Buscando…</span>`;
+      } else if (status === 'retrying') {
+        statusBadge = `<span class="search-status retrying">🔄 Tentativa ${data.attempt}/3…</span>`;
+      } else if (status === 'timeout') {
+        statusBadge = `<span class="search-status timeout">⏱ Cancelada — sem resposta após 3 tentativas</span>`;
+      }
+
       html += `<div class="search-query-group">
-        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;display:flex;align-items:center;gap:6px;">
           🔍 ${data.sticker_id} <span style="opacity:0.5">(${queryId.substring(0, 8)}...)</span>
+          ${statusBadge}
         </div>`;
+
       if (data.hits.length === 0) {
-        html += '<div class="empty-state" style="padding:6px">Aguardando resultados...</div>';
+        if (status === 'timeout') {
+          html += '<div class="empty-state" style="padding:6px;color:var(--error,#f87171)">Nenhum nó encontrado com essa figurinha.</div>';
+        } else {
+          html += '<div class="empty-state" style="padding:6px">Aguardando resultados...</div>';
+        }
       } else {
         for (const hit of data.hits) {
           html += `<div class="search-hit">
@@ -330,6 +374,7 @@
     }
     searchResults.innerHTML = html;
   }
+
 
   function renderTrades() {
     // Pending
