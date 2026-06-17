@@ -74,6 +74,10 @@ class TradeManager extends EventEmitter {
   acceptTrade(tradeId) {
     const trade = this._getTrade(tradeId);
 
+    if (!trade.initiator) {
+      throw new Error('Não é possível aceitar: peer de origem desconhecido');
+    }
+
     // Verificar se temos a figurinha que o outro quer (= o que o ofertante quer)
     if (!this.inventory.canTrade(trade.want_sticker_id, trade.want_qty)) {
       this.rejectTrade(tradeId, 'Inventário insuficiente');
@@ -123,9 +127,17 @@ class TradeManager extends EventEmitter {
 
   // Recebemos uma proposta de troca
   handleTradeOffer(msg) {
+    // Usar sender_peer_id como fallback se origin_peer_id não vier (interoperabilidade)
+    const initiator = msg.origin_peer_id || msg.sender_peer_id;
+
+    if (!initiator) {
+      console.warn('[TROCA] TRADE_OFFER sem origin_peer_id nem sender_peer_id — descartado');
+      return;
+    }
+
     const trade = {
       trade_id:         msg.message_id,       // usamos o message_id para identificar a troca
-      initiator:        msg.origin_peer_id,
+      initiator,
       target:           this.peerId,
       offer_sticker_id: msg.offer_sticker_id, // o que o iniciador oferece
       offer_qty:        msg.offer_qty || 1,
@@ -136,7 +148,7 @@ class TradeManager extends EventEmitter {
     };
 
     this.trades.set(trade.trade_id, trade);
-    console.log(`[TROCA] Proposta recebida ← ${msg.origin_peer_id}: oferece ${trade.offer_qty}x${msg.offer_sticker_id}, quer ${trade.want_qty}x${msg.want_sticker_id}`);
+    console.log(`[TROCA] Proposta recebida ← ${initiator}: oferece ${trade.offer_qty}x${msg.offer_sticker_id}, quer ${trade.want_qty}x${msg.want_sticker_id}`);
     this.emit('trade_received', trade);
     return trade;
   }
