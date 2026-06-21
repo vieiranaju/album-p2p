@@ -33,6 +33,7 @@ class PeerEngine extends EventEmitter {
   constructor(config, inventory, neighborManager) {
     super();
     this.peerId      = config.peer_id;
+    this.peerIp      = config.ip || null; // IP local para preencher origin_peer_ip
     this.ttl         = config.default_ttl || DEFAULT_TTL;
     this.inventory   = inventory;
     this.neighbors   = neighborManager;
@@ -129,7 +130,7 @@ class PeerEngine extends EventEmitter {
     // Enviar SEARCH para cada vizinho com TTL completo
     const peers = this.neighbors.getConnectedPeers();
     for (const { peer_id } of peers) {
-      this.neighbors.sendTo(peer_id, buildSearch(this.peerId, this.peerId, peer_id, stickerId, this.ttl, queryId));
+      this.neighbors.sendTo(peer_id, buildSearch(this.peerId, this.peerId, peer_id, stickerId, this.ttl, queryId, this.peerIp));
     }
 
     const attempt = session.attempts;
@@ -228,7 +229,7 @@ class PeerEngine extends EventEmitter {
     if (nextTtl > 0) {
       for (const { peer_id } of this.neighbors.getConnectedPeers()) {
         if (peer_id === sender_peer_id) continue; // não devolver para quem enviou
-        this.neighbors.sendTo(peer_id, buildSearch(origin_peer_id, this.peerId, peer_id, sticker_id, nextTtl, query_id));
+        this.neighbors.sendTo(peer_id, buildSearch(origin_peer_id, this.peerId, peer_id, sticker_id, nextTtl, query_id, msg.origin_peer_ip));
       }
       console.log(`[BUSCA] Repassada com TTL ${nextTtl}`);
     }

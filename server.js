@@ -4,6 +4,7 @@ const http    = require('http');
 const WebSocket = require('ws');
 const path    = require('path');
 const fs      = require('fs');
+const os      = require('os');
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
@@ -14,6 +15,18 @@ const portArg   = process.argv.find(a => a.startsWith('--port='));
 const configPath = configArg ? path.resolve(configArg.split('=')[1]) : path.join(__dirname, 'config.json');
 const config     = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 if (portArg) config.port = parseInt(portArg.split('=')[1]);
+
+// Detectar IP local da máquina (primeiro IP não-loopback encontrado)
+function getLocalIp() {
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const iface of ifaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+    }
+  }
+  return '127.0.0.1';
+}
+config.ip = config.ip || getLocalIp();
 
 console.log('═══════════════════════════════════════════════');
 console.log(`  🎴 Sistema de Figurinhas P2P`);

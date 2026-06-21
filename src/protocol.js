@@ -30,11 +30,12 @@ function buildHello(senderPeerId, knownPeers = []) {
 
 // SEARCH — busca uma figurinha na rede por inundação
 // Spec: documentacao/PROTOCOLO-SEARCH.md
-function buildSearch(originPeerId, senderPeerId, receiverPeerId, stickerId, ttl, queryId) {
+function buildSearch(originPeerId, senderPeerId, receiverPeerId, stickerId, ttl, queryId, originPeerIp) {
   return {
     type:             MSG_TYPES.SEARCH,
     message_id:       uuidv4(),       // novo UUID a cada reenvio
     origin_peer_id:   originPeerId,   // quem iniciou a busca (não muda)
+    origin_peer_ip:   originPeerIp || null, // IP do nó originador (não muda)
     sender_peer_id:   senderPeerId,   // quem está enviando esta cópia
     receiver_peer_id: receiverPeerId, // vizinho destinatário
     query_id:         queryId || uuidv4(), // mesmo em todos os repasses
