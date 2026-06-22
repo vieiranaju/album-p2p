@@ -45,11 +45,11 @@
   </header>
 
   <main id="app-main">
-    <!-- Left Column -->
+    <!-- Left Column: Album + Search + Trades -->
     <div class="column column-left">
       <section class="panel" id="inventory-panel">
         <div class="panel-header">
-          <h2>📦 Inventário</h2>
+          <h2>📒 Álbum</h2>
           <span class="panel-badge" id="inventory-count">0</span>
         </div>
         <div class="panel-body">
@@ -59,25 +59,6 @@
         </div>
       </section>
 
-      <section class="panel" id="neighbors-panel">
-        <div class="panel-header">
-          <h2>👥 Vizinhos</h2>
-          <span class="panel-badge" id="neighbors-count">0</span>
-        </div>
-        <div class="panel-body">
-          <div class="add-neighbor-form">
-            <input type="text" id="neighbor-url-input" placeholder="ws://192.168.1.10:8080" />
-            <button id="add-neighbor-btn" class="btn btn-primary btn-sm">+ Adicionar</button>
-          </div>
-          <div id="neighbors-list" class="neighbors-list">
-            <div class="empty-state">Nenhum vizinho conectado</div>
-          </div>
-        </div>
-      </section>
-    </div>
-
-    <!-- Center Column -->
-    <div class="column column-center">
       <section class="panel" id="search-panel">
         <div class="panel-header">
           <h2>🔍 Buscar Figurinha</h2>
@@ -86,7 +67,7 @@
           <div class="search-form">
             <input type="text" id="search-input" placeholder="Ex: FIG-05" />
             <button id="search-btn" class="btn btn-accent">
-              <span class="btn-icon">🔍</span> Buscar na Rede
+              <span class="btn-icon">🔍</span> Buscar
             </button>
           </div>
           <div id="search-results" class="search-results">
@@ -115,8 +96,24 @@
       </section>
     </div>
 
-    <!-- Right Column -->
+    <!-- Right Column: Neighbors + Log -->
     <div class="column column-right">
+      <section class="panel" id="neighbors-panel">
+        <div class="panel-header">
+          <h2>👥 Vizinhos</h2>
+          <span class="panel-badge" id="neighbors-count">0</span>
+        </div>
+        <div class="panel-body">
+          <div class="add-neighbor-form">
+            <input type="text" id="neighbor-url-input" placeholder="ws://192.168.1.10:8080" />
+            <button id="add-neighbor-btn" class="btn btn-primary btn-sm">+ Adicionar</button>
+          </div>
+          <div id="neighbors-list" class="neighbors-list">
+            <div class="empty-state">Nenhum vizinho conectado</div>
+          </div>
+        </div>
+      </section>
+
       <section class="panel panel-log" id="log-panel">
         <div class="panel-header">
           <h2>📋 Log da Rede</h2>
