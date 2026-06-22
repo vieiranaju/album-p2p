@@ -186,10 +186,10 @@ class NeighborManager extends EventEmitter {
       return raw;
     }
 
-    // Host puro (ex: "192.168.1.10") — montar URL padrão
-    // Validar que parece um IP ou hostname válido
+    // Host puro (ex: "192.168.1.10") — montar URL padrão sem path específico
+    // para interoperabilidade: o servidor aceita conexões P2P em qualquer path
     if (/^[\d.]+$/.test(raw) || /^[a-zA-Z0-9.-]+\.[a-zA-Z0-9]+$/.test(raw)) {
-      return `ws://${raw}:${this.port}/ws/peer`;
+      return `ws://${raw}:${this.port}`;
     }
 
     return null;

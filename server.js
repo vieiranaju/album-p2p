@@ -1,10 +1,11 @@
 // server.js — Ponto de entrada: servidor HTTP + WebSocket P2P
-const express = require('express');
-const http    = require('http');
+const express  = require('express');
+const http     = require('http');
 const WebSocket = require('ws');
-const path    = require('path');
-const fs      = require('fs');
-const os      = require('os');
+const path     = require('path');
+const fs       = require('fs');
+const os       = require('os');
+const readline = require('readline');
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
@@ -274,12 +275,42 @@ server.listen(config.port, () => {
   console.log('\n✅ Sistema pronto!\n');
 });
 
-// Encerrar com limpeza ao pressionar Ctrl+C
-process.on('SIGINT', () => {
-  console.log('\n🛑 Encerrando...');
+// ─── Encerramento limpo (Ctrl+C / SIGTERM) ──────────────────────────────────
+
+function shutdown(signal) {
+  console.log(`\n🛑 Recebido ${signal} — encerrando...`);
+
+  // 1. Desconectar todos os peers (fecha os WebSockets de saída)
   neighbors.disconnectAll();
-  server.close(() => { console.log('Servidor encerrado.'); process.exit(0); });
-});
+
+  // 2. Fechar os servidores WebSocket (encerra conexões ainda abertas)
+  wssPeer.close();
+  wssUi.close();
+
+  // 3. Fechar o servidor HTTP e sair
+  server.close(() => {
+    console.log('✅ Servidor encerrado.');
+    process.exit(0);
+  });
+
+  // 4. Forçar saída após 2s caso alguma conexão não feche a tempo
+  setTimeout(() => {
+    console.log('⏱️  Forçando encerramento após timeout.');
+    process.exit(0);
+  }, 2000).unref(); // .unref() não bloqueia o event loop
+}
+
+process.on('SIGINT',  () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+// No Windows, Ctrl+C via npm/PowerShell não sempre gera SIGINT no processo filho.
+// Usar readline é o padrão recomendado para garantir a captura do Ctrl+C.
+if (process.platform === 'win32') {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  rl.on('SIGINT', () => process.emit('SIGINT'));
+  // SIGBREAK é disparado por Ctrl+Break no Windows
+  process.on('SIGBREAK', () => shutdown('SIGBREAK'));
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
