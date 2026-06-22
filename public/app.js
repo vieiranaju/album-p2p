@@ -272,6 +272,14 @@
     statPeers.textContent = state.peers.length;
   }
 
+  // Base URL for sticker images from GitHub
+  const STICKER_IMG_BASE = 'https://raw.githubusercontent.com/rgcoelho01/album/main/docs/images/';
+  const STICKER_PLACEHOLDER = STICKER_IMG_BASE + 'FIG-XX.png';
+
+  function getStickerImageUrl(stickerId) {
+    return STICKER_IMG_BASE + stickerId + '.png';
+  }
+
   function renderInventory() {
     const items = state.inventory;
     const keys = Object.keys(items).sort();
@@ -285,8 +293,12 @@
     inventoryGrid.innerHTML = keys.map(id => {
       const qty = items[id];
       const isOwn = id === state.sticker_id;
+      const imgUrl = getStickerImageUrl(id);
       return `<div class="sticker-card${isOwn ? ' own' : ''}">
-        <div class="sticker-icon">${isOwn ? '⭐' : '🎴'}</div>
+        <div class="sticker-img-wrapper">
+          <img src="${imgUrl}" alt="${id}" class="sticker-img" onerror="this.src='${STICKER_PLACEHOLDER}'" loading="lazy" />
+          ${isOwn ? '<span class="sticker-own-badge">⭐</span>' : ''}
+        </div>
         <div class="sticker-name">${id}</div>
         <div class="sticker-qty">×${qty}</div>
       </div>`;
