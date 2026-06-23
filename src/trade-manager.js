@@ -41,12 +41,12 @@ class TradeManager extends EventEmitter {
   // ─── Ações do usuário ─────────────────────────────────────────────────────
 
   // Propor troca: ofereço minha figurinha, quero a figurinha do outro peer
-  proposeTrade(targetPeerId, offerStickerId, wantStickerId, offerQty = 1, wantQty = 1) {
-    if (!this.inventory.canTrade(offerStickerId, offerQty)) {
+  proposeTrade(targetPeerId, offerStickerId, wantStickerId) {
+    if (!this.inventory.canTrade(offerStickerId, 1)) {
       throw new Error(`Sem ${offerStickerId} disponível para troca`);
     }
 
-    const msg = buildTradeOffer(this.peerId, this.peerId, targetPeerId, offerStickerId, wantStickerId, offerQty, wantQty);
+    const msg = buildTradeOffer(this.peerId, this.peerId, targetPeerId, offerStickerId, wantStickerId);
 
     // Armazenar localmente usando o message_id como identificador da troca
     const trade = {
@@ -54,9 +54,7 @@ class TradeManager extends EventEmitter {
       initiator:        this.peerId,
       target:           targetPeerId,
       offer_sticker_id: offerStickerId,
-      offer_qty:        offerQty,
       want_sticker_id:  wantStickerId,
-      want_qty:         wantQty,
       status:           STATUS.PENDING,
       direction:        'outgoing',
     };
@@ -64,7 +62,7 @@ class TradeManager extends EventEmitter {
     this.trades.set(trade.trade_id, trade);
     this.neighborManager.sendTo(targetPeerId, msg);
 
-    console.log(`[TROCA] Proposta enviada → ${targetPeerId}: ofereço ${offerQty}x${offerStickerId}, quero ${wantQty}x${wantStickerId}`);
+    console.log(`[TROCA] Proposta enviada → ${targetPeerId}: ofereço ${offerStickerId}, quero ${wantStickerId}`);
     this.emit('trade_proposed', trade);
     return trade;
   }
@@ -79,7 +77,7 @@ class TradeManager extends EventEmitter {
     }
 
     // Verificar se temos a figurinha que o outro quer (= o que o ofertante quer)
-    if (!this.inventory.canTrade(trade.want_sticker_id, trade.want_qty)) {
+    if (!this.inventory.canTrade(trade.want_sticker_id, 1)) {
       this.rejectTrade(tradeId, 'Inventário insuficiente');
       throw new Error(`Sem ${trade.want_sticker_id} disponível`);
     }
@@ -140,15 +138,13 @@ class TradeManager extends EventEmitter {
       initiator,
       target:           this.peerId,
       offer_sticker_id: msg.offer_sticker_id, // o que o iniciador oferece
-      offer_qty:        msg.offer_qty || 1,
       want_sticker_id:  msg.want_sticker_id,  // o que o iniciador quer (o que eu tenho que dar)
-      want_qty:         msg.want_qty  || 1,
       status:           STATUS.PENDING,
       direction:        'incoming',
     };
 
     this.trades.set(trade.trade_id, trade);
-    console.log(`[TROCA] Proposta recebida ← ${initiator}: oferece ${trade.offer_qty}x${msg.offer_sticker_id}, quer ${trade.want_qty}x${msg.want_sticker_id}`);
+    console.log(`[TROCA] Proposta recebida ← ${initiator}: oferece ${msg.offer_sticker_id}, quer ${msg.want_sticker_id}`);
     this.emit('trade_received', trade);
     return trade;
   }
@@ -177,8 +173,8 @@ class TradeManager extends EventEmitter {
 
     // Atualizar inventário do ofertante (A):
     //   remove o que oferecemos, adiciona o que queríamos
-    this.inventory.remove(trade.offer_sticker_id, trade.offer_qty);
-    this.inventory.add(trade.want_sticker_id, trade.want_qty);
+    this.inventory.remove(trade.offer_sticker_id, 1);
+    this.inventory.add(trade.want_sticker_id, 1);
 
     // Enviar TRANSFER_CONFIRM para o aceitante:
     //   offer_sticker_id = figurinha que NÓS transferimos (o que oferecemos)
@@ -238,8 +234,8 @@ class TradeManager extends EventEmitter {
     // Atualizar inventário do aceitante:
     //   remove o que enviamos ao ofertante (= want da oferta = msg.want_sticker_id)
     //   adiciona o que recebemos do ofertante (= offer da oferta = msg.offer_sticker_id)
-    this.inventory.remove(trade.want_sticker_id, trade.want_qty);
-    this.inventory.add(trade.offer_sticker_id, trade.offer_qty);
+    this.inventory.remove(trade.want_sticker_id, 1);
+    this.inventory.add(trade.offer_sticker_id, 1);
 
     trade.status = STATUS.CONFIRMED;
     this._saveHistory(trade);

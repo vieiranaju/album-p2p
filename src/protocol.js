@@ -46,7 +46,7 @@ function buildSearch(originPeerId, senderPeerId, receiverPeerId, stickerId, ttl,
 
 // SEARCH_HIT — resposta positiva: este nó possui a figurinha
 // Spec: documentacao/PROTOCOLO-SEARCH_HIT.md
-function buildSearchHit(originPeerId, senderPeerId, receiverPeerId, queryId, stickerId, quantity) {
+function buildSearchHit(originPeerId, senderPeerId, receiverPeerId, queryId, stickerId) {
   return {
     type:             MSG_TYPES.SEARCH_HIT,
     message_id:       uuidv4(),
@@ -55,7 +55,6 @@ function buildSearchHit(originPeerId, senderPeerId, receiverPeerId, queryId, sti
     receiver_peer_id: receiverPeerId, // nó que iniciou a busca
     query_id:         queryId,
     sticker_id:       stickerId,
-    quantity:         quantity,        // quantas cópias o nó possui
   };
 }
 
@@ -75,7 +74,7 @@ function buildSearchMiss(originPeerId, senderPeerId, receiverPeerId, queryId, st
 
 // TRADE_OFFER — propõe uma troca direta
 // Spec: documentacao/PROTOCOLO-TRADE_OFFER.md
-function buildTradeOffer(originPeerId, senderPeerId, receiverPeerId, offerStickerId, wantStickerId, offerQty, wantQty) {
+function buildTradeOffer(originPeerId, senderPeerId, receiverPeerId, offerStickerId, wantStickerId) {
   return {
     type:             MSG_TYPES.TRADE_OFFER,
     message_id:       uuidv4(),
@@ -84,8 +83,6 @@ function buildTradeOffer(originPeerId, senderPeerId, receiverPeerId, offerSticke
     receiver_peer_id: receiverPeerId,
     offer_sticker_id: offerStickerId, // figurinha que estou oferecendo
     want_sticker_id:  wantStickerId,  // figurinha que desejo receber
-    offer_qty:        offerQty || 1,  // quantidade oferecida
-    want_qty:         wantQty  || 1,  // quantidade desejada
   };
 }
 

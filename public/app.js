@@ -48,9 +48,7 @@
   const tradeSubmitBtn = $('trade-submit-btn');
   const tradeTargetPeer = $('trade-target-peer');
   const tradeOfferSticker = $('trade-offer-sticker');
-  const tradeOfferQty = $('trade-offer-qty');
   const tradeWantSticker = $('trade-want-sticker');
-  const tradeWantQty = $('trade-want-qty');
 
   const incomingTradeModal = $('incoming-trade-modal');
   const incomingTradeDetails = $('incoming-trade-details');
@@ -141,7 +139,7 @@
         break;
 
       case 'search_hit':
-        addLog(`✓ HIT: ${msg.data.origin_peer_id} tem ${msg.data.quantity}x ${msg.data.sticker_id}`, 'incoming');
+        addLog(`✓ HIT: ${msg.data.origin_peer_id} tem ${msg.data.sticker_id}`, 'incoming');
         if (state.search_results[msg.data.query_id]) {
           state.search_results[msg.data.query_id].hits.push(msg.data);
           // Limpar status de retry ao receber resultado
@@ -168,7 +166,7 @@
         break;
 
       case 'search_hit_sent':
-        addLog(`📤 HIT enviado: ${msg.data.quantity}x ${msg.data.sticker_id}`, 'outgoing');
+        addLog(`📤 HIT enviado: ${msg.data.sticker_id}`, 'outgoing');
         break;
 
       case 'trade_received':
@@ -371,7 +369,7 @@
         }
       } else {
         for (const hit of data.hits) {
-          const qtyLabel = hit.quantity > 1 ? `${hit.quantity}× disponíveis` : 'disponível';
+          const qtyLabel = 'disponível';
           html += `<div class="search-hit">
             <div class="search-hit-info">
               <span class="search-hit-peer">${hit.origin_peer_id}</span>
@@ -414,8 +412,8 @@
           </div>
           <div class="trade-item-detail">
             ${isIncoming
-              ? `Oferece ${t.offer_qty}× ${t.offer_sticker_id} · Quer ${t.want_qty}× ${t.want_sticker_id}`
-              : `Ofereço ${t.offer_qty}× ${t.offer_sticker_id} · Quero ${t.want_qty}× ${t.want_sticker_id}`}
+              ? `Oferece ${t.offer_sticker_id} · Quer ${t.want_sticker_id}`
+              : `Ofereço ${t.offer_sticker_id} · Quero ${t.want_sticker_id}`}
           </div>
           ${actions}
         </div>`;
@@ -436,7 +434,7 @@
             <span class="trade-item-status ${statusClass}">${statusLabel}</span>
           </div>
           <div class="trade-item-detail">
-            ${t.offer_qty}× ${t.offer_sticker_id} ⇄ ${t.want_qty}× ${t.want_sticker_id}
+            ${t.offer_sticker_id} ⇄ ${t.want_sticker_id}
           </div>
         </div>`;
       }).join('');
@@ -462,8 +460,6 @@
   function showTradeModal(targetPeer, wantSticker) {
     tradeTargetPeer.value = targetPeer || '';
     tradeWantSticker.value = wantSticker || '';
-    tradeOfferQty.value = 1;
-    tradeWantQty.value = 1;
     tradeModal.style.display = 'flex';
   }
 
@@ -474,8 +470,8 @@
   function showIncomingTradeModal(trade) {
     incomingTradeDetails.innerHTML = `
       <p><strong>De:</strong> <span class="highlight">${trade.initiator}</span></p>
-      <p><strong>Oferece:</strong> <span class="highlight">${trade.offer_qty}× ${trade.offer_sticker_id}</span></p>
-      <p><strong>Quer:</strong> <span class="highlight">${trade.want_qty}× ${trade.want_sticker_id}</span></p>
+      <p><strong>Oferece:</strong> <span class="highlight">${trade.offer_sticker_id}</span></p>
+      <p><strong>Quer:</strong> <span class="highlight">${trade.want_sticker_id}</span></p>
     `;
     incomingTradeModal.style.display = 'flex';
   }
@@ -532,9 +528,7 @@
   tradeSubmitBtn.addEventListener('click', () => {
     const targetPeer = tradeTargetPeer.value.trim().toUpperCase();
     const offerSticker = tradeOfferSticker.value;
-    const offerQty = parseInt(tradeOfferQty.value) || 1;
     const wantSticker = tradeWantSticker.value.trim().toUpperCase();
-    const wantQty = parseInt(tradeWantQty.value) || 1;
 
     if (!targetPeer || !offerSticker || !wantSticker) {
       addLog('❌ Preencha todos os campos da troca', 'error');
@@ -545,9 +539,7 @@
       action: 'trade_propose',
       target_peer_id: targetPeer,
       offer_sticker_id: offerSticker,
-      offer_qty: offerQty,
       want_sticker_id: wantSticker,
-      want_qty: wantQty,
     });
 
     hideTradeModal();

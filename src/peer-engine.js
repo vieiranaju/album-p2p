@@ -122,9 +122,8 @@ class PeerEngine extends EventEmitter {
 
     // Verificar primeiro no próprio inventário (só na 1ª tentativa)
     if (session.attempts === 1 && this.inventory.has(stickerId)) {
-      const quantity = this.inventory.getQuantity(stickerId);
-      this._addResult(rootQueryId, { origin_peer_id: this.peerId, sticker_id: stickerId, query_id: rootQueryId, quantity });
-      this.emit('search_hit', { origin_peer_id: this.peerId, sticker_id: stickerId, query_id: rootQueryId, quantity });
+      this._addResult(rootQueryId, { origin_peer_id: this.peerId, sticker_id: stickerId, query_id: rootQueryId });
+      this.emit('search_hit', { origin_peer_id: this.peerId, sticker_id: stickerId, query_id: rootQueryId });
     }
 
     // Enviar SEARCH para cada vizinho com TTL completo
@@ -217,11 +216,10 @@ class PeerEngine extends EventEmitter {
 
     // Se temos a figurinha, responder com SEARCH_HIT pelo mesmo caminho que veio
     if (this.inventory.has(sticker_id)) {
-      const quantity = this.inventory.getQuantity(sticker_id);
-      const hit = buildSearchHit(this.peerId, this.peerId, origin_peer_id, query_id, sticker_id, quantity);
+      const hit = buildSearchHit(this.peerId, this.peerId, origin_peer_id, query_id, sticker_id);
       this.neighbors.sendToWs(sourceWs, hit);
-      console.log(`[BUSCA] ✓ HIT! Tenho ${quantity}x ${sticker_id}`);
-      this.emit('search_hit_sent', { query_id, sticker_id, quantity });
+      console.log(`[BUSCA] ✓ HIT! Tenho ${sticker_id}`);
+      this.emit('search_hit_sent', { query_id, sticker_id });
     }
 
     // Repassar para os outros vizinhos se ainda há TTL suficiente (exceto para quem nos enviou)
@@ -250,14 +248,8 @@ class PeerEngine extends EventEmitter {
       // Eu iniciei esta busca — resolver o rootQueryId (pode ser retry)
       const rootQueryId = this._queryToRoot.get(query_id) || query_id;
 
-      // quantity: usa o valor da mensagem se vier; caso contrário 1 (a spec não exige o campo,
-      // então peers que não o enviam são tratados como "tem pelo menos 1")
-      const quantity = (msg.quantity != null && msg.quantity > 0)
-        ? msg.quantity
-        : 1;
-
-      this._addResult(rootQueryId, { origin_peer_id, sticker_id, query_id: rootQueryId, quantity });
-      this.emit('search_hit', { origin_peer_id, sticker_id, query_id: rootQueryId, quantity });
+      this._addResult(rootQueryId, { origin_peer_id, sticker_id, query_id: rootQueryId });
+      this.emit('search_hit', { origin_peer_id, sticker_id, query_id: rootQueryId });
 
       // Como chegou pelo menos um resultado, cancelar o timer de retry desta figurinha
       const session = this.pendingSearches.get(sticker_id);
