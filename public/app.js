@@ -38,6 +38,7 @@
   const pendingTradesCount = $('pending-trades-count');
   const logContainer = $('log-container');
   const neighborUrlInput = $('neighbor-url-input');
+  const neighborPortInput = $('neighbor-port-input');
   const addNeighborBtn = $('add-neighbor-btn');
   const clearLogBtn = $('clear-log-btn');
 
@@ -54,6 +55,13 @@
   const incomingTradeDetails = $('incoming-trade-details');
   const incomingAcceptBtn = $('incoming-accept-btn');
   const incomingRejectBtn = $('incoming-reject-btn');
+
+  // Sticker preview modal
+  const stickerPreviewModal = $('sticker-preview-modal');
+  const stickerPreviewImg = $('sticker-preview-img');
+  const stickerPreviewName = $('sticker-preview-name');
+  const stickerPreviewQty = $('sticker-preview-qty');
+  const stickerPreviewClose = $('sticker-preview-close');
 
   // ===== WEBSOCKET =====
   function connect() {
@@ -292,7 +300,7 @@
       const qty = items[id];
       const isOwn = id === state.sticker_id;
       const imgUrl = getStickerImageUrl(id);
-      return `<div class="sticker-card${isOwn ? ' own' : ''}">
+      return `<div class="sticker-card${isOwn ? ' own' : ''}" onclick="app.previewSticker('${id}', ${qty})">
         <div class="sticker-img-wrapper">
           <img src="${imgUrl}" alt="${id}" class="sticker-img" onerror="this.src='${STICKER_PLACEHOLDER}'" loading="lazy" />
           ${isOwn ? '<span class="sticker-own-badge">⭐</span>' : ''}
@@ -494,8 +502,11 @@
   });
 
   addNeighborBtn.addEventListener('click', () => {
-    const url = neighborUrlInput.value.trim();
-    if (!url) return;
+    const ip = neighborUrlInput.value.trim();
+    if (!ip) return;
+    const port = parseInt(neighborPortInput.value) || 8080;
+    neighborPortInput.value = port; // garante que nunca fica vazio
+    const url = `ws://${ip}:${port}`;
     send({ action: 'add_neighbor', url });
     neighborUrlInput.value = '';
     addLog(`➕ Adicionando vizinho: ${url}`, 'outgoing');
@@ -503,6 +514,17 @@
 
   neighborUrlInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') addNeighborBtn.click();
+  });
+
+  neighborPortInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addNeighborBtn.click();
+  });
+
+  // Garantir que o campo de porta nunca fique vazio
+  neighborPortInput.addEventListener('blur', () => {
+    if (!neighborPortInput.value || parseInt(neighborPortInput.value) < 1) {
+      neighborPortInput.value = 8080;
+    }
   });
 
   clearLogBtn.addEventListener('click', () => {
@@ -573,7 +595,20 @@
     rejectTrade: (tradeId) => {
       send({ action: 'trade_reject', trade_id: tradeId, reason: 'Recusada pelo usuário' });
     },
+    previewSticker: (stickerId, qty) => {
+      stickerPreviewImg.src = getStickerImageUrl(stickerId);
+      stickerPreviewImg.alt = stickerId;
+      stickerPreviewImg.onerror = function() { this.src = STICKER_PLACEHOLDER; };
+      stickerPreviewName.textContent = stickerId;
+      stickerPreviewQty.textContent = `×${qty}`;
+      stickerPreviewModal.style.display = 'flex';
+    },
   };
+
+  // Sticker preview modal close handlers
+  function hideStickerPreview() { stickerPreviewModal.style.display = 'none'; }
+  stickerPreviewClose.addEventListener('click', hideStickerPreview);
+  stickerPreviewModal.querySelector('.modal-overlay').addEventListener('click', hideStickerPreview);
 
   // ===== INIT =====
   connect();

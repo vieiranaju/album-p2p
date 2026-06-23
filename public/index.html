@@ -105,7 +105,12 @@
         </div>
         <div class="panel-body">
           <div class="add-neighbor-form">
-            <input type="text" id="neighbor-url-input" placeholder="ws://192.168.1.10:8080" />
+            <div class="neighbor-input-group">
+              <span class="neighbor-input-prefix">ws://</span>
+              <input type="text" id="neighbor-url-input" placeholder="192.168.1.10" />
+              <span class="neighbor-input-separator">:</span>
+              <input type="number" id="neighbor-port-input" value="8080" min="1" max="65535" />
+            </div>
             <button id="add-neighbor-btn" class="btn btn-primary btn-sm">+ Adicionar</button>
           </div>
           <div id="neighbors-list" class="neighbors-list">
@@ -175,6 +180,21 @@
       <div class="modal-footer">
         <button id="incoming-reject-btn" class="btn btn-danger">Recusar</button>
         <button id="incoming-accept-btn" class="btn btn-success">Aceitar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sticker Preview Modal -->
+  <div id="sticker-preview-modal" class="modal" style="display:none">
+    <div class="modal-overlay"></div>
+    <div class="modal-content sticker-preview-content">
+      <button class="modal-close" id="sticker-preview-close">&times;</button>
+      <div class="sticker-preview-body">
+        <img id="sticker-preview-img" src="" alt="" class="sticker-preview-img" />
+        <div class="sticker-preview-info">
+          <span id="sticker-preview-name" class="sticker-preview-name"></span>
+          <span id="sticker-preview-qty" class="sticker-preview-qty"></span>
+        </div>
       </div>
     </div>
   </div>
