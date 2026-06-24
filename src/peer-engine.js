@@ -232,7 +232,7 @@ class PeerEngine extends EventEmitter {
         if (peer_id === sender_peer_id) continue; // não devolver para quem enviou
         this.neighbors.sendTo(peer_id, buildSearch(origin_peer_id, this.peerId, peer_id, sticker_id, nextTtl, query_id, msg.origin_peer_ip));
       }
-      console.log(`[BUSCA] Repassada com TTL ${nextTtl}`);
+      console.log(`[BUSCA] TTL decrementado (${ttlNum} -> ${nextTtl}). Repassando busca...`);
     }
   }
 
