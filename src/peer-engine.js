@@ -121,9 +121,10 @@ class PeerEngine extends EventEmitter {
     this._queryToRoot.set(queryId, rootQueryId);
 
     // Verificar primeiro no próprio inventário (só na 1ª tentativa)
-    if (session.attempts === 1 && this.inventory.has(stickerId)) {
-      this._addResult(rootQueryId, { origin_peer_id: this.peerId, sticker_id: stickerId, query_id: rootQueryId });
-      this.emit('search_hit', { origin_peer_id: this.peerId, sticker_id: stickerId, query_id: rootQueryId });
+    const normalizedId = PeerEngine._normalizeStickerId(stickerId);
+    if (session.attempts === 1 && this.inventory.has(normalizedId)) {
+      this._addResult(rootQueryId, { origin_peer_id: this.peerId, sticker_id: normalizedId, query_id: rootQueryId });
+      this.emit('search_hit', { origin_peer_id: this.peerId, sticker_id: normalizedId, query_id: rootQueryId });
     }
 
     // Enviar SEARCH para cada vizinho com TTL completo
@@ -215,11 +216,13 @@ class PeerEngine extends EventEmitter {
     console.log(`[BUSCA] Recebida de ${sender_peer_id || origin_peer_id}: ${sticker_id} (TTL: ${ttlNum})`);
 
     // Se temos a figurinha, responder com SEARCH_HIT pelo mesmo caminho que veio
-    if (this.inventory.has(sticker_id)) {
-      const hit = buildSearchHit(this.peerId, this.peerId, origin_peer_id, query_id, sticker_id);
+    // Normaliza para aceitar buscas com ou sem extensão .png/.PNG
+    const normalizedStickerId = PeerEngine._normalizeStickerId(sticker_id);
+    if (this.inventory.has(normalizedStickerId)) {
+      const hit = buildSearchHit(this.peerId, this.peerId, origin_peer_id, query_id, normalizedStickerId);
       this.neighbors.sendToWs(sourceWs, hit);
-      console.log(`[BUSCA] ✓ HIT! Tenho ${sticker_id}`);
-      this.emit('search_hit_sent', { query_id, sticker_id });
+      console.log(`[BUSCA] ✓ HIT! Tenho ${normalizedStickerId} (buscado como: ${sticker_id})`);
+      this.emit('search_hit_sent', { query_id, sticker_id: normalizedStickerId });
     }
 
     // Repassar para os outros vizinhos se ainda há TTL suficiente (exceto para quem nos enviou)
@@ -311,6 +314,12 @@ class PeerEngine extends EventEmitter {
       this._seenHits.clear();
       console.log('[BUSCA] Cache de queries limpo');
     }
+  }
+
+  // Normaliza sticker_id: remove extensão .png/.PNG (case-insensitive)
+  // Ex: "FIG-01.PNG" → "FIG-01", "FIG-01" → "FIG-01"
+  static _normalizeStickerId(id) {
+    return id.replace(/\.png$/i, '').toUpperCase();
   }
 }
 
